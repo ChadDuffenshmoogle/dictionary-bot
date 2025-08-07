@@ -1,3 +1,4 @@
+# src/config.py
 import os
 import logging
 
@@ -15,7 +16,11 @@ DISCORD_TOKEN = os.environ.get('DISCORD_TOKEN') # Ensure this is the correct env
 GITHUB_OWNER = "ChadDuffenshmoogle"
 GITHUB_REPO = "dictionary-bot"
 GITHUB_BRANCH = "main"
-GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN') # It's better to use a dedicated GITHUB_TOKEN env var, not DISCORD_TOKEN
+
+# IMPORTANT: Fix the environment variable name
+# The bot code expects YOUR_GITHUB_PAT, so we'll rename this variable.
+GITHUB_TOKEN = os.environ.get('YOUR_GITHUB_PAT')
+YOUR_GITHUB_PAT = os.environ.get('YOUR_GITHUB_PAT') # We'll keep this variable name in this file for clarity and for the bot to be able to use it
 
 # Dictionary File Configuration
 BASE_VERSION = "v1.2.4"

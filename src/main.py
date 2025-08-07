@@ -1,3 +1,4 @@
+# src/main.py
 import discord
 import os
 import re
@@ -5,7 +6,8 @@ import asyncio
 from typing import Optional, List
 
 # Import components from our new modules
-from .config import DISCORD_TOKEN, YOUR_GITHUB_PAT, GITHUB_OWNER, GITHUB_REPO, ENTRY_PATTERN, logger # Use YOUR_GITHUB_PAT
+# Corrected the import to use GITHUB_TOKEN instead of YOUR_GITHUB_PAT
+from .config import DISCORD_TOKEN, GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, ENTRY_PATTERN, logger 
 from .github_api import GitHubAPI
 from .dictionary_manager import DictionaryManager
 from .dictionary_parser import parse_dictionary_entries # Needed for entry validation for adding
@@ -29,10 +31,11 @@ async def on_ready():
     logger.info(f"Bot started successfully")
 
     # Initialize GitHub API and dictionary manager
-    if not YOUR_GITHUB_PAT: # Check for YOUR_GITHUB_PAT now
-        logger.error("YOUR_GITHUB_PAT environment variable not set! Bot will not function properly for GitHub interactions.")
+    # Now checking for GITHUB_TOKEN as defined in config.py
+    if not GITHUB_TOKEN:
+        logger.error("GITHUB_TOKEN environment variable not set! Bot will not function properly for GitHub interactions.")
     else:
-        github_api = GitHubAPI(YOUR_GITHUB_PAT) # Pass YOUR_GITHUB_PAT here
+        github_api = GitHubAPI(GITHUB_TOKEN) # Pass GITHUB_TOKEN here
         dict_manager = DictionaryManager(github_api)
 
         # Test GitHub connection
