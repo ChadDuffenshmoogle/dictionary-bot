@@ -128,9 +128,20 @@ async def on_message(message):
             try:
                 success = dict_manager.add_entry(term, pos, definition, ety, example_lines)
                 if success:
+                    # Truncate the term for the status if it's too long
+                    truncated_term = term if len(term) <= 50 else term[:47] + '...'
+                    
                     await message.add_reaction('✅')
-                    await message.channel.send(f"✅ Successfully added '{term}' to the dictionary.")
                     logger.info(f"Successfully added entry: {term}")
+
+                    # Update the bot's status to show the latest dictionary version and the new term.
+                    latest_version = dict_manager.find_latest_version()
+                    status_text = f"📖 v{latest_version} - {truncated_term}"
+                    await bot.change_presence(activity=discord.Game(status_text))
+
+                    # Remove the reaction after 4 seconds
+                    await asyncio.sleep(4)
+                    await message.remove_reaction('✅', bot.user)
                 else:
                     await message.add_reaction('❌')
                     await message.channel.send(f"❌ Could not add '{term}'. It may already exist or there was an error.")
