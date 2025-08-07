@@ -1,4 +1,5 @@
 # src/main.py
+import os
 import discord
 from config import (
     DISCORD_TOKEN,
@@ -10,10 +11,12 @@ from config import (
 )
 
 # Set up the Discord client with the correct intents
-# The 'messages' and 'guilds' intents are needed for most bot functionality
+# The 'messages' and 'guilds' intents are needed for bot functionality.
+# The `message_content` intent is required to read message content.
 intents = discord.Intents.default()
 intents.messages = True
 intents.guilds = True
+intents.message_content = True # This is crucial for the bot to read your commands
 
 # Initialize the bot client
 client = discord.Client(intents=intents)
@@ -22,6 +25,9 @@ client = discord.Client(intents=intents)
 @client.event
 async def on_ready():
     logger.info(f'Logged in as {client.user}')
+    # The bot is now online and listening for messages in any server it's in.
+    # No initial message is sent, which means no CHANNEL_ID secret is needed.
+    # The `!hello` command should now work in any channel the bot can see.
 
 # This event is triggered when a message is sent in any channel the bot can see
 @client.event
