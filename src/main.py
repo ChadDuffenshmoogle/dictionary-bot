@@ -30,6 +30,7 @@ async def on_ready():
     # Check for required environment variables
     if not DISCORD_TOKEN:
         logger.error("Required environment variable DISCORD_TOKEN is missing.")
+        await bot.change_presence(activity=discord.Game("❌ Missing Discord Token"))
         await bot.close()
         return
 
@@ -37,8 +38,11 @@ async def on_ready():
     try:
         latest = dict_manager.find_latest_version()
         logger.info(f"Successfully connected to GitHub. Latest version: {latest}")
+        # Set status to show latest version
+        await bot.change_presence(activity=discord.Game(f"📖 Dictionary {latest}"))
     except Exception as e:
         logger.error(f"Failed to connect to GitHub during startup: {e}")
+        await bot.change_presence(activity=discord.Game("❌ GitHub connection failed"))
 
     # Add the command cog to the bot
     try:
@@ -51,6 +55,7 @@ async def on_ready():
         logger.info(f"Loaded commands: {command_names}")
     except Exception as e:
         logger.error(f"Failed to load DictionaryCommands cog: {e}")
+        await bot.change_presence(activity=discord.Game("❌ Commands failed to load"))
         # Log the full traceback for debugging
         import traceback
         logger.error(f"Full error: {traceback.format_exc()}")
@@ -77,6 +82,7 @@ async def on_ready():
     
     if not welcome_sent:
         logger.warning("Could not find a channel to send a welcome message to.")
+        await bot.change_presence(activity=discord.Game("⚠️ No channel access"))
 
 @bot.event
 async def on_message(message):
@@ -146,6 +152,15 @@ async def on_command_error(ctx, error):
     else:
         logger.error(f"Command error in {ctx.command}: {error}")
         await ctx.send(f"❌ An error occurred: {str(error)}")
+        # Update status to show error briefly
+        await bot.change_presence(activity=discord.Game("❌ Command error"))
+        await asyncio.sleep(10)  # Show error for 10 seconds
+        # Reset to normal status
+        try:
+            latest = dict_manager.find_latest_version()
+            await bot.change_presence(activity=discord.Game(f"📖 Dictionary {latest}"))
+        except:
+            await bot.change_presence(activity=discord.Game("📖 Dictionary Bot"))
 
 # Start the bot
 if __name__ == "__main__":

@@ -28,6 +28,12 @@ class DictionaryCommands(commands.Cog):
         if version_arg.lower() == "latest":
             version = self.dict_manager.find_latest_version()
             await ctx.send(f"📖 Sending latest version: {version}")
+        else:
+            # Allow formats like "1.2.4" instead of requiring "v1.2.4"
+            if not version_arg.startswith('v'):
+                version = f"v{version_arg}"
+            else:
+                version = version_arg
 
         content = self.dict_manager.get_dictionary_content(version)
         if content:
@@ -89,7 +95,7 @@ class DictionaryCommands(commands.Cog):
             clean_lines = [line for line in lines if not line.strip().startswith("---------------------------------------------")]
             result = '\n'.join(clean_lines).strip()
 
-        await ctx.send(f"🎲 **Random Entry:**\n{result}")
+        await ctx.send(f"{result}")
 
     @commands.command(name='search')
     async def search_entries(self, ctx: commands.Context, *, query: str):
@@ -155,15 +161,9 @@ class DictionaryCommands(commands.Cog):
 
         version_list = [f"**{v[0]}** ({v[1]} KB)" for v in versions_with_sizes]
         version_text = "\n".join(version_list)
-        latest = versions_with_sizes[-1][0] if versions_with_sizes else "Unknown"
 
-        msg = f"""📚 **Available Dictionary Versions:**
-
-{version_text}
-
-**Latest:** {latest}
-Use `!getversion <vX.X.X>` to download any version.
-🐙 **GitHub:** `{GITHUB_OWNER}/{GITHUB_REPO}`"""
+        msg = f"""{version_text}
+Use `!getversion <vX.X.X>` to download any version."""
 
         await ctx.send(msg)
 
@@ -177,19 +177,5 @@ Use `!getversion <vX.X.X>` to download any version.
 `!random` - Show a random dictionary entry
 `!search <query>` - Search for terms containing the query
 `!versions` - List all available versions with added terms
-`!help` - Show this help message
-
-**Adding Entries:**
-To add an entry, just type it directly in the channel. The bot will automatically detect it if it's in this format:
-```
-(Optional) Etymology: origin information
-Term (noun) - the definition
-(Optional) Ex: example usage
-```
-**Example:**
-`Etymology: A combination of 'cyborg' and 'iceberg'.
-cyberg (n.) - Half machine half iceberg`
-
-**🐙 GitHub Integration:** All versions stored at `{GITHUB_OWNER}/{GITHUB_REPO}`
-**📊 Logging:** Use `fly logs` to view bot activity"""
+`!help` - Show this help message"""
         await ctx.send(help_msg)
