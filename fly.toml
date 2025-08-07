@@ -1,0 +1,10 @@
+app = "dictionary-bot"
+
+[build]
+  builder = "paketobuildpacks/builder:base"
+
+[env]
+  PORT = "8080"
+
+[processes]
+  worker = "python main.py"
