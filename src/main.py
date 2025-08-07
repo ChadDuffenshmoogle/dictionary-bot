@@ -7,10 +7,10 @@ import asyncio
 from discord.ext import commands
 
 # Import modules from our new modular structure
-from config import DISCORD_TOKEN, logger, ENTRY_PATTERN
-from github_api import GitHubAPI
-from dictionary_manager import DictionaryManager
-from discord_commands import DictionaryCommands
+from .config import DISCORD_TOKEN, logger, ENTRY_PATTERN
+from .github_api import GitHubAPI
+from .dictionary_manager import DictionaryManager
+from .discord_commands import DictionaryCommands
 
 # Set up the bot with a command prefix and the correct intents
 intents = discord.Intents.default()

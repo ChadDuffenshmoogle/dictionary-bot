@@ -1,7 +1,7 @@
 # src/dictionary_parser.py
 import re
 from typing import List, Optional
-from .config import ENTRY_PATTERN # Import from config
+from .config import ENTRY_PATTERN # Import from config with relative import
 
 def sort_key_ignore_punct(s: str) -> str:
     """Strips leading punctuation, returns lowercase remaining string for sorting."""

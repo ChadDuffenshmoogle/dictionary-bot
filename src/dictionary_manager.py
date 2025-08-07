@@ -3,9 +3,9 @@ import re
 import pytz
 from datetime import datetime
 from typing import Optional, List
-from .github_api import GitHubAPI # Import GitHubAPI
+from .github_api import GitHubAPI # Import GitHubAPI with relative import
 from .dictionary_parser import DictionaryEntry, parse_dictionary_entries, get_corpus_from_content, sort_key_ignore_punct # Import parsing functions and class
-from .config import BASE_VERSION, FILE_PREFIX, FILE_EXTENSION, logger # Import from config
+from .config import BASE_VERSION, FILE_PREFIX, FILE_EXTENSION, logger # Import from config with relative import
 
 class DictionaryManager:
     """Manages dictionary operations with GitHub integration."""

@@ -5,7 +5,7 @@ import requests
 import base64
 from typing import List, Optional
 
-# Fix the import by using the correct relative import
+# Fix the import by using relative import (correct for package structure)
 from .config import GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, YOUR_GITHUB_PAT
 
 logger = logging.getLogger(__name__)

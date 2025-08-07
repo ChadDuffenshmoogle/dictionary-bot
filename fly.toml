@@ -11,8 +11,8 @@ primary_region = "ord"  # Chicago region (close to NIU)
   # Add any non-sensitive config here if needed
 
 [processes]
-  # IMPORTANT: Change the run command to point to the correct file path.
-  worker = "python src/main.py"
+  # Update the worker process to match the Dockerfile CMD
+  worker = "python -m src.main"
 
 [deploy]
   strategy = "immediate"

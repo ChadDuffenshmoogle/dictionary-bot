@@ -193,4 +193,3 @@ cyberg (n.) - Half machine half iceberg`
 **🐙 GitHub Integration:** All versions stored at `{GITHUB_OWNER}/{GITHUB_REPO}`
 **📊 Logging:** Use `fly logs` to view bot activity"""
         await ctx.send(help_msg)
-
