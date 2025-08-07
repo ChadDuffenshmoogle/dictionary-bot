@@ -40,21 +40,137 @@ async def find_latest_version():
     return max_version
 
 
-async def delete_with_countdown(message, delay):
-    """Delete a message after a countdown"""
-    original_content = message.content
-    for i in range(3, 0, -1):
-        await asyncio.sleep(1)
-        await message.edit(content=f"{original_content} ({i})")
-    await asyncio.sleep(1)
-    await message.delete()
-
-
 def sort_key_ignore_punct(s: str) -> str:
     # Strip leading punctuation, return lowercase remaining string
     # Extract just the term (before the first space and parenthesis)
     term = s.split(' (')[0] if ' (' in s else s
-    return term.lstrip(" '-").lower()
+    return term.lstrip(" '-\"").lower()
+
+
+class DictionaryEntry:
+    def __init__(self, term, pos, definition, etymology=None, examples=None):
+        self.term = term
+        self.pos = pos
+        self.definition = definition
+        self.etymology = etymology
+        self.examples = examples or []
+    
+    def to_string(self):
+        """Convert entry to string format for file output"""
+        if self.etymology or self.examples:
+            # Entry with etymology/examples needs hyphen separators
+            result = "---------------------------------------------\n"
+            if self.etymology:
+                result += f"Etymology: {self.etymology}\n\n"
+            result += f"{self.term} ({self.pos}) - {self.definition}"
+            if self.examples:
+                result += "\n" + "\n".join(self.examples)
+            result += "\n---------------------------------------------"
+            return result
+        else:
+            # Simple entry
+            return f"{self.term} ({self.pos}) - {self.definition}"
+
+
+def parse_dictionary_entries(content):
+    """Parse dictionary content into DictionaryEntry objects"""
+    entries = []
+    
+    if "-----DICTIONARY PROPER-----" not in content:
+        return entries
+    
+    body = content.split("-----DICTIONARY PROPER-----\n\n", 1)[1]
+    
+    # Split by double newlines, but be careful about hyphen sections
+    parts = body.split('\n\n')
+    
+    i = 0
+    while i < len(parts):
+        part = parts[i].strip()
+        
+        if part.startswith("---------------------------------------------"):
+            # This is a complex entry with etymology/examples
+            entry_content = [part]
+            i += 1
+            
+            # Collect all parts until we hit the closing hyphens or end
+            while i < len(parts):
+                next_part = parts[i].strip()
+                entry_content.append(next_part)
+                
+                if next_part.endswith("---------------------------------------------"):
+                    break
+                i += 1
+            
+            # Parse the complex entry
+            full_text = '\n\n'.join(entry_content)
+            entry = parse_complex_entry(full_text)
+            if entry:
+                entries.append(entry)
+                
+        elif re.match(ENTRY_PATTERN, part):
+            # Simple entry
+            match = re.match(ENTRY_PATTERN, part)
+            if match:
+                term, pos, definition = match.groups()
+                entries.append(DictionaryEntry(term, pos, definition))
+        
+        i += 1
+    
+    return entries
+
+
+def parse_complex_entry(text):
+    """Parse a complex entry with etymology and/or examples"""
+    lines = text.split('\n')
+    etymology = None
+    term = pos = definition = None
+    examples = []
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        if line.startswith("Etymology:"):
+            # Start collecting etymology
+            ety_text = line[10:].strip()
+            ety_lines = [ety_text] if ety_text else []
+            i += 1
+            
+            # Continue collecting until we hit the main entry or end
+            while i < len(lines):
+                next_line = lines[i].strip()
+                if re.match(ENTRY_PATTERN, next_line):
+                    # Found the main entry
+                    etymology = '\n'.join(ety_lines).strip()
+                    match = re.match(ENTRY_PATTERN, next_line)
+                    term, pos, definition = match.groups()
+                    i += 1
+                    break
+                elif next_line and not next_line.startswith("-----"):
+                    ety_lines.append(lines[i])
+                i += 1
+            continue
+            
+        elif re.match(ENTRY_PATTERN, line):
+            # Main entry line
+            match = re.match(ENTRY_PATTERN, line)
+            term, pos, definition = match.groups()
+            
+        elif line.startswith("Ex") and ":" in line:
+            # Example line
+            examples.append(line)
+            
+        elif line.startswith("\t") or (line and not line.startswith("-----") and term):
+            # Additional content (indented text, continued definition, etc.)
+            if not examples:
+                examples.append(line)
+        
+        i += 1
+    
+    if term and pos and definition:
+        return DictionaryEntry(term, pos, definition, etymology, examples)
+    return None
 
 
 async def add_entry(term, pos, definition, ety_lines=None):
@@ -68,10 +184,8 @@ async def add_entry(term, pos, definition, ety_lines=None):
     old_path = get_filename(latest)
     print(f"[DEBUG] Reading from: {old_path}")
 
-    # Use dictionaries to store entries and etymologies keyed by lowercased term for uniqueness
-    parsed_entries_map = {}  # {lower_term: original_full_entry_string}
-    ety_map = {}  # {lower_term: etymology_text}
-    corpus_terms = set()  # Use a set for unique corpus terms
+    corpus = []
+    entries = []
 
     # Determine the new version by incrementing the latest version
     m = re.search(r"v\.?(\d+)\.(\d+)\.(\d+)", latest, re.IGNORECASE)
@@ -85,106 +199,56 @@ async def add_entry(term, pos, definition, ety_lines=None):
 
     if os.path.exists(old_path):
         with open(old_path, "r", encoding="utf-8") as f:
-            c = f.read()
+            content = f.read()
 
-        # --- PARSING EXISTING FILE CONTENT ---
-
-        # 1. Parse Corpus
-        corpus_match = re.search(r"Corpus:\s*(.*?)\s*\n\n", c,
+        # Parse corpus
+        corpus_match = re.search(r"Corpus:\s*(.*?)\s*\n\n", content,
                                  re.DOTALL | re.IGNORECASE)
         if corpus_match:
-            corpus_terms.update(t.strip() for t in corpus_match.group(1).split(",") if t.strip())
-        print(f"[DEBUG] Corpus loaded: {len(corpus_terms)} terms")
+            corpus = [
+                t.strip() for t in corpus_match.group(1).split(",")
+                if t.strip()
+            ]
+        print(f"[DEBUG] Corpus loaded: {len(corpus)} terms")
 
-        # 2. Parse Entries and Etymologies from the Dictionary Proper section
-        # Find the start of the dictionary proper section
-        dict_proper_start_idx = c.find("-----DICTIONARY PROPER-----")
-        if dict_proper_start_idx != -1:
-            dict_content = c[dict_proper_start_idx + len("-----DICTIONARY PROPER-----"):].strip()
-
-            # Split the content by the etymology separator to get blocks
-            blocks = re.split(r'^-+$', dict_content, flags=re.MULTILINE) # Split by lines of only hyphens
-
-            current_term_for_ety = None
-            current_ety_text = []
-
-            for block in blocks:
-                lines = [line.strip() for line in block.split('\n') if line.strip()]
-                if not lines:
-                    continue
-
-                is_etymology_block = False
-                temp_entry_line = None
-
-                for line in lines:
-                    if line.startswith("Etymology:"):
-                        is_etymology_block = True
-                        current_ety_text.append(line[10:].strip()) # Collect etymology text
-                    elif re.match(ENTRY_PATTERN, line):
-                        match = re.match(ENTRY_PATTERN, line)
-                        if match:
-                            term_from_entry = match.group(1)
-                            parsed_entries_map[term_from_entry.lower()] = line
-                            corpus_terms.add(term_from_entry) # Add to corpus from parsed entry
-
-                            if is_etymology_block and current_ety_text:
-                                ety_map[term_from_entry.lower()] = "\n".join(current_ety_text).strip()
-                                current_ety_text = [] # Reset for next etymology
-                            is_etymology_block = False # Reset flag after processing entry
-                    elif is_etymology_block:
-                        current_ety_text.append(line) # Continue collecting etymology lines
-
-            print(f"[DEBUG] Entries loaded: {len(parsed_entries_map)} items")
-            print(f"[DEBUG] Etymologies parsed: {len(ety_map)} terms")
+        # Parse existing entries
+        entries = parse_dictionary_entries(content)
+        print(f"[DEBUG] Entries loaded: {len(entries)} items")
     else:
         print("[DEBUG] No existing file – starting fresh.")
 
-    # --- ADD/UPDATE NEW ENTRY ---
-    new_entry_string = f"{term} ({pos}) - {definition}"
+    # Check if term already exists
+    if any(term.lower() == e.term.lower() for e in entries):
+        print(f"[DEBUG] Term '{term}' exists—skipping.")
+        return
 
-    # Add or update the new entry in the map
-    if term.lower() in parsed_entries_map:
-        print(f"[DEBUG] Term '{term}' exists in parsed map—updating definition.")
-        parsed_entries_map[term.lower()] = new_entry_string # Overwrite if exists
-    else:
-        print(f"[DEBUG] Adding new term '{term}' to parsed map.")
-        parsed_entries_map[term.lower()] = new_entry_string
-        corpus_terms.add(term) # Add to corpus only if it's a genuinely new term
+    # Add to corpus and sort
+    corpus.append(term)
+    corpus = sorted(set(corpus), key=sort_key_ignore_punct)
+    print(f"[DEBUG] Corpus sorted: {len(corpus)} terms")
 
-    # Add or update etymology for the new term
-    if ety_lines:
-        ety_map[term.lower()] = "\n".join(ety_lines).strip()
-        print(f"[DEBUG] Etymology stored/updated for '{term}'")
+    # Create new entry
+    etymology = "\n".join(ety_lines).strip() if ety_lines else None
+    new_entry = DictionaryEntry(term, pos, definition, etymology)
+    
+    # Add to entries and sort
+    entries.append(new_entry)
+    entries.sort(key=lambda e: sort_key_ignore_punct(e.term))
+    print(f"[DEBUG] Entries sorted: {len(entries)} items")
 
-    # --- PREPARE FOR WRITING ---
-    # Sort the unique terms for consistent dictionary order
-    # Use the original casing from the stored entry for sorting, otherwise just the term
-    sorted_unique_terms_keys = sorted(parsed_entries_map.keys(), key=lambda k: sort_key_ignore_punct(parsed_entries_map.get(k, k)))
+    if etymology:
+        print(f"[DEBUG] Etymology stored for '{term}'")
 
-    # Reconstruct the entries list from the map, in sorted order, using original casing
-    final_sorted_entries = [parsed_entries_map[key] for key in sorted_unique_terms_keys]
-    final_corpus = sorted(list(corpus_terms), key=sort_key_ignore_punct) # Ensure corpus is sorted and from set
-
-    # --- BUILD THE NEW FILE CONTENT ---
-    content = f"{FILE_PREFIX} {new_version} - {timestamp}\n\nCorpus:\n" + ", ".join(
-        final_corpus) + "\n\n"
-
+    # Build the new file content
+    content = f"{FILE_PREFIX} {new_version} - {timestamp}\n\nCorpus:\n" + ", ".join(corpus) + "\n\n"
     content += "-----DICTIONARY PROPER-----\n\n"
-
-    dictionary_proper_content_parts = []
-    for entry_string in final_sorted_entries:
-        match = re.match(ENTRY_PATTERN, entry_string)
-        if match:
-            current_term = match.group(1) # Get the term using its original casing from the entry string
-            if current_term.lower() in ety_map: # Check if this term has an etymology
-                dictionary_proper_content_parts.append("---------------------------------------------")
-                dictionary_proper_content_parts.append(f"Etymology: {ety_map[current_term.lower()]}")
-                dictionary_proper_content_parts.append(entry_string)
-                dictionary_proper_content_parts.append("---------------------------------------------")
-            else:
-                dictionary_proper_content_parts.append(entry_string)
-
-    content += "\n\n".join(dictionary_proper_content_parts) + "\n\n" # Join all parts with double newlines
+    
+    # Add all entries in order
+    entry_strings = []
+    for entry in entries:
+        entry_strings.append(entry.to_string())
+    
+    content += "\n\n".join(entry_strings) + "\n\n"
 
     new_path = get_filename(new_version)
     with open(new_path, "w", encoding="utf-8") as f:
@@ -201,11 +265,9 @@ async def on_ready():
         for channel in guild.text_channels:
             if channel.permissions_for(guild.me).send_messages:
                 try:
-                    msg = await channel.send(
-                        "Dictionary bot connected and ready.") # Removed fluff
-                    # await msg.delete(delay=2) # Removed auto-deletion
-                    print(
-                        f"[DEBUG] Sent connection message to #{channel.name}")
+                    msg = await channel.send("Dictionary bot connected and ready.")
+                    await msg.delete(delay=2)  # Auto-delete after 2 seconds
+                    print(f"[DEBUG] Sent connection message to #{channel.name}")
                     return  # Only send to one channel
                 except discord.errors.Forbidden:
                     continue
@@ -213,7 +275,7 @@ async def on_ready():
 
 @client.event
 async def on_message(msg):
-    if msg.author.bot: 
+    if msg.author.bot:
         return
 
     # Handle all bot commands first
@@ -222,11 +284,9 @@ async def on_message(msg):
         command = command_parts[0].lower()
 
         if command == "!getversion":
-            ver = command_parts[1] if len(command_parts) == 2 else None
-            # send_version is not defined in the original code,
-            # assuming it was intended to send the file directly.
-            # For this request, we'll just acknowledge if it were defined.
-            await msg.channel.send("Command '!getversion' functionality (sending file) is not implemented in this snippet.") # Removed delete_after
+            # Default to latest if no version specified
+            ver = command_parts[1] if len(command_parts) >= 2 else "latest"
+            await send_version(msg.channel, ver)
             return
 
         elif command == "!stats":
@@ -245,14 +305,6 @@ async def on_message(msg):
             await search_entries(msg.channel, query)
             return
 
-        elif command == "!define":
-            if len(command_parts) < 2:
-                await msg.channel.send("Usage: `!define <term>`")
-                return
-            query = " ".join(command_parts[1:])
-            await define_term(msg.channel, query)
-            return
-
         elif command == "!versions":
             await list_versions(msg.channel)
             return
@@ -260,17 +312,20 @@ async def on_message(msg):
         elif command == "!help":
             help_msg = """Dictionary Bot Commands:
 
-`!getversion <version>` - Download a specific version (or `latest`)
+`!getversion [version]` - Download a specific version or latest (default)
 `!stats` - Show dictionary statistics
 `!random` - Show a random dictionary entry
-`!search <query>` - Search for terms containing the query
-`!define <term>` - Look up a specific term
+`!search <query>` - Search for terms containing the query (includes etymology)
 `!versions` - List all available versions
 `!help` - Show this help message
 
-Adding Entries:
-Type: `Term (part of speech) - definition`""" # Removed optional etymology section
-            await msg.channel.send(help_msg) # Removed delete_after
+**Adding Entries:**
+```
+(Optional) Etymology: origin information
+Term (noun) - the definition
+(Optional) Ex: example usage
+```"""
+            await msg.channel.send(help_msg)
             return
 
         # If it's a command we don't recognize, just return silently
@@ -318,13 +373,22 @@ Type: `Term (part of speech) - definition`""" # Removed optional etymology secti
         print(f"[DEBUG] Found etymology: {len(ety)} lines")
 
     await add_entry(term, pos, definition, ety)
-    # React to the user's message instead of sending a new one
-    await msg.add_reaction('✅') # Use the unicode emoji for :white_check_mark:
-    await asyncio.sleep(4) # Wait for 4 seconds
-    try:
-        await msg.remove_reaction('✅', client.user) # Remove the bot's reaction
-    except discord.errors.Forbidden:
-        print(f"[DEBUG] Could not remove reaction from message {msg.id}. Bot lacks permissions.")
+    # React to the user's message 
+    await msg.add_reaction('✅')
+    await asyncio.sleep(4)
+    await msg.remove_reaction('✅', client.user)
+
+
+async def send_version(channel, version):
+    if version.lower() == "latest":
+        version = await find_latest_version()
+        await channel.send(f"📖 Sending latest version: {version}")
+
+    path = get_filename(version)
+    if os.path.exists(path):
+        await channel.send(file=discord.File(path))
+    else:
+        await channel.send(f"Version `{version}` not found.")
 
 
 async def show_stats(channel):
@@ -332,7 +396,7 @@ async def show_stats(channel):
     path = get_filename(latest)
 
     if not os.path.exists(path):
-        await channel.send("No dictionary file found.") # Removed fluff
+        await channel.send("No dictionary file found.")
         return
 
     with open(path, "r", encoding="utf-8") as f:
@@ -365,11 +429,9 @@ async def show_stats(channel):
 Latest Version: {latest}
 Entries: {corpus_count}
 Entries with Etymology: {ety_count}
-File Size: {size_kb} KB
+File Size: {size_kb} KB""" 
 
-Use `!getversion latest` to download the current version.""" # Removed fluff, adjusted wording
-
-    await channel.send(stats_msg) # Removed delete_after
+    await channel.send(stats_msg) 
 
 
 async def show_random_entry(channel):
@@ -377,32 +439,33 @@ async def show_random_entry(channel):
     path = get_filename(latest)
 
     if not os.path.exists(path):
-        await channel.send("No dictionary file found.") # Removed fluff
+        await channel.send("No dictionary file found.")
         return
 
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    entries = []
-    if "-----DICTIONARY PROPER-----" in content:
-        dict_proper_start_idx = content.find("-----DICTIONARY PROPER-----")
-        if dict_proper_start_idx != -1:
-            dict_content = content[dict_proper_start_idx + len("-----DICTIONARY PROPER-----"):].strip()
-
-            # Extract individual entries, skipping etymology and separator lines
-            lines = [line.strip() for line in dict_content.split('\n') if line.strip()]
-            for line in lines:
-                if re.match(ENTRY_PATTERN, line):
-                    entries.append(line)
+    entries = parse_dictionary_entries(content)
 
     if not entries:
-        await channel.send("No entries found.") # Removed fluff
+        await channel.send("No entries found.")  
         return
 
     import random
     random_entry = random.choice(entries)
 
-    await channel.send(f"Random Entry:\n{random_entry}") # Removed fluff, removed delete_after
+    result = random_entry.to_string()
+    
+    # Clean up the result for display (remove separating hyphens)
+    if result.startswith("---------------------------------------------"):
+        lines = result.split('\n')
+        clean_lines = []
+        for line in lines:
+            if not line.strip().startswith("---------------------------------------------"):
+                clean_lines.append(line)
+        result = '\n'.join(clean_lines).strip()
+
+    await channel.send(result)
 
 
 async def search_entries(channel, query):
@@ -410,138 +473,55 @@ async def search_entries(channel, query):
     path = get_filename(latest)
 
     if not os.path.exists(path):
-        await channel.send("No dictionary file found.") # Removed fluff
+        await channel.send("No dictionary file found.") 
         return
 
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    entries = []
-    if "-----DICTIONARY PROPER-----" in content:
-        dict_proper_start_idx = content.find("-----DICTIONARY PROPER-----")
-        if dict_proper_start_idx != -1:
-            dict_content = content[dict_proper_start_idx + len("-----DICTIONARY PROPER-----"):].strip()
+    entries = parse_dictionary_entries(content)
 
-            lines = [line.strip() for line in dict_content.split('\n') if line.strip()]
-            for line in lines:
-                if re.match(ENTRY_PATTERN, line):
-                    entries.append(line)
-
-    # Search only for terms
+    # Search in terms, definitions, and etymology
     matches = []
     for entry in entries:
-        match = re.match(ENTRY_PATTERN, entry)
-        if match:
-            term = match.group(1) # Get just the term
-            if query.lower() in term.lower():
-                matches.append(entry)
+        # Search in term
+        if query.lower() in entry.term.lower():
+            matches.append(entry)
+        # Search in definition
+        elif query.lower() in entry.definition.lower():
+            matches.append(entry)
+        # Search in etymology if present
+        elif entry.etymology and query.lower() in entry.etymology.lower():
+            matches.append(entry)
 
     if not matches:
-        await channel.send(f"No terms found containing '{query}'.") # Removed fluff
+        await channel.send(f"No matches found for '{query}'.")
         return
 
     if len(matches) > 5:
-        result = f"Found {len(matches)} matches for '{query}' (showing first 5):\n\n" # Removed fluff
-        result += "\n\n".join(matches[:5])
+        result = f"Found {len(matches)} matches for '{query}' (showing first 5):\n\n"
+        shown_matches = matches[:5]
         result += f"\n\n...and {len(matches)-5} more"
     else:
-        result = f"Found {len(matches)} match{'es' if len(matches) > 1 else ''} for '{query}':\n\n" # Removed fluff
-        result += "\n\n".join(matches)
+        result = f"Found {len(matches)} match{'es' if len(matches) > 1 else ''} for '{query}':\n\n"
+        shown_matches = matches
+
+    # Format matches for display
+    match_strings = []
+    for entry in shown_matches:
+        entry_str = f"{entry.term} ({entry.pos}) - {entry.definition}"
+        if entry.etymology:
+            entry_str += f"\nEtymology: {entry.etymology}"
+        if entry.examples:
+            entry_str += "\n" + "\n".join(entry.examples)
+        match_strings.append(entry_str)
+
+    result += "\n\n".join(match_strings)
 
     if len(result) > 2000:  # Discord message limit
-        result = result[:1950] + "...\nMessage truncated" # Removed fluff
+        result = result[:1950] + "...\nMessage truncated"
 
-    await channel.send(result) # Removed delete_after
-
-
-async def define_term(channel, query):
-    latest = await find_latest_version()
-    path = get_filename(latest)
-
-    if not os.path.exists(path):
-        await channel.send("No dictionary file found.") # Removed fluff
-        return
-
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    entries_map_for_define = {} # {lower_term: full_entry_string}
-    etymologies_for_define = {} # {lower_term: etymology_text}
-
-    if "-----DICTIONARY PROPER-----" in content:
-        dict_proper_start_idx = content.find("-----DICTIONARY PROPER-----")
-        if dict_proper_start_idx != -1:
-            dict_content = content[dict_proper_start_idx + len("-----DICTIONARY PROPER-----"):].strip()
-
-            blocks = re.split(r'^-+$', dict_content, flags=re.MULTILINE)
-
-            current_term_for_ety = None
-            current_ety_text = []
-            is_etymology_block = False
-
-            for block in blocks:
-                lines = [line.strip() for line in block.split('\n') if line.strip()]
-                if not lines:
-                    continue
-
-                for line in lines:
-                    if line.startswith("Etymology:"):
-                        is_etymology_block = True
-                        current_ety_text.append(line[10:].strip())
-                    elif re.match(ENTRY_PATTERN, line):
-                        match = re.match(ENTRY_PATTERN, line)
-                        if match:
-                            term_from_entry = match.group(1)
-                            entries_map_for_define[term_from_entry.lower()] = line
-
-                            if is_etymology_block and current_ety_text:
-                                etymologies_for_define[term_from_entry.lower()] = "\n".join(current_ety_text).strip()
-                                current_ety_text = []
-                            is_etymology_block = False
-                    elif is_etymology_block:
-                        current_ety_text.append(line)
-
-    # Search for exact or partial matches
-    exact_matches = []
-    partial_matches = []
-
-    for term_lower, full_entry_string in entries_map_for_define.items():
-        match = re.match(ENTRY_PATTERN, full_entry_string)
-        if match:
-            term_original_case, pos, definition = match.groups()
-            if term_lower == query.lower():
-                exact_matches.append((term_original_case, pos, definition, full_entry_string))
-            elif query.lower() in term_lower:
-                partial_matches.append((term_original_case, pos, definition, full_entry_string))
-
-    if not exact_matches and not partial_matches:
-        await channel.send(f"No definition found for '{query}'.") # Removed fluff
-        return
-
-    result = ""
-
-    if exact_matches:
-        result += f"Definition for '{query}':\n\n" # Removed fluff
-        for term, pos, definition, full_entry in exact_matches:
-            if term.lower() in etymologies_for_define:
-                result += f"Etymology: {etymologies_for_define[term.lower()]}\n"
-            result += f"{term} ({pos}) - {definition}\n\n" # Added extra line break
-
-    if partial_matches and not exact_matches:
-        result += f"Similar terms to '{query}':\n\n" # Removed fluff
-        for term, pos, definition, full_entry in partial_matches[:
-                                                                 3]:  # Limit to 3
-            if term.lower() in etymologies_for_define:
-                result += f"Etymology: {etymologies_for_define[term.lower()]}\n"
-            result += f"{term} ({pos}) - {definition}\n\n" # Added extra line break
-
-        if len(partial_matches) > 3:
-            result += f"...and {len(partial_matches)-3} more similar terms\n" # Removed fluff
-
-    if len(result) > 2000:
-        result = result[:1950] + "...\nMessage truncated" # Removed fluff
-
-    await channel.send(result) # Removed delete_after
+    await channel.send(result)
 
 
 async def list_versions(channel):
@@ -551,7 +531,7 @@ async def list_versions(channel):
     ]
 
     if not files:
-        await channel.send("No dictionary versions found.") # Removed fluff
+        await channel.send("No dictionary versions found.")
         return
 
     versions = []
@@ -566,7 +546,7 @@ async def list_versions(channel):
     # Sort versions
     versions.sort(key=lambda x: [int(i) for i in x[0][1:].split('.')])
 
-    version_list = "\n".join([f"{v[0]} ({v[1]} KB)" for v in versions]) # Simplified list format
+    version_list = "\n".join([f"{v[0]} ({v[1]} KB)" for v in versions])
     latest = versions[-1][0] if versions else "Unknown"
 
     msg = f"""Available Dictionary Versions:
@@ -574,9 +554,9 @@ async def list_versions(channel):
 {version_list}
 
 Latest: {latest}
-Use `!getversion <version>` to download any version.""" # Removed fluff
+Use `!getversion <vX.X.X>` to download any version."""
 
-    await channel.send(msg) # Removed delete_after
+    await channel.send(msg)
 
 
 client.run(os.environ['DISCORD_TOKEN'])
