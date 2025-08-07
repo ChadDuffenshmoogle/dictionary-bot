@@ -3,14 +3,16 @@ app = "dictionary-bot"
 primary_region = "ord"  # Chicago region (close to NIU)
 
 [build]
-  builder = "paketobuildpacks/builder:base"
+  # Remove the 'builder' line to let Fly.io use your Dockerfile.
+  # The presence of a Dockerfile in the root of your repo is enough.
 
 [env]
   # Environment variables (non-secret ones only)
   # Add any non-sensitive config here if needed
 
 [processes]
-  worker = "python main.py"
+  # IMPORTANT: Change the run command to point to the correct file path.
+  worker = "python src/main.py"
 
 [deploy]
   strategy = "immediate"
