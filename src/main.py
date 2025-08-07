@@ -3,10 +3,11 @@
 import os
 import discord
 import re
+import asyncio
 from discord.ext import commands
 
 # Import modules from our new modular structure
-from config import GITHUB_TOKEN, DISCORD_TOKEN, logger, ENTRY_PATTERN
+from config import DISCORD_TOKEN, logger, ENTRY_PATTERN
 from github_api import GitHubAPI
 from dictionary_manager import DictionaryManager
 from discord_commands import DictionaryCommands
@@ -18,8 +19,8 @@ intents.guilds = True
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Initialize GitHub API and dictionary manager globally, so they can be accessed by on_message
-github_api = GitHubAPI(token=GITHUB_TOKEN)
+# Initialize GitHub API and dictionary manager globally
+github_api = GitHubAPI()
 dict_manager = DictionaryManager(github_api)
 
 @bot.event
@@ -27,9 +28,8 @@ async def on_ready():
     logger.info(f'Logged in as {bot.user}')
 
     # Check for required environment variables
-    if not GITHUB_TOKEN or not DISCORD_TOKEN:
-        logger.error("Required environment variables (GITHUB_TOKEN or DISCORD_TOKEN) are missing.")
-        # We can't proceed, so we should exit gracefully.
+    if not DISCORD_TOKEN:
+        logger.error("Required environment variable DISCORD_TOKEN is missing.")
         await bot.close()
         return
 
@@ -41,28 +41,44 @@ async def on_ready():
         logger.error(f"Failed to connect to GitHub during startup: {e}")
 
     # Add the command cog to the bot
-    await bot.add_cog(DictionaryCommands(bot, dict_manager))
-    logger.info("DictionaryCommands cog loaded.")
+    try:
+        await bot.add_cog(DictionaryCommands(bot, dict_manager))
+        logger.info("DictionaryCommands cog loaded.")
+    except Exception as e:
+        logger.error(f"Failed to load DictionaryCommands cog: {e}")
 
-    # Find a suitable channel to send a welcome message.
+    # Find a suitable channel to send a welcome message
+    welcome_sent = False
     for guild in bot.guilds:
+        logger.info(f"Checking guild: {guild.name}")
         for channel in guild.text_channels:
             if channel.permissions_for(guild.me).send_messages:
                 try:
-                    await channel.send("Hello! I am online and ready to go.")
-                    return
+                    await channel.send("📖 Dictionary Bot is online and ready!")
+                    logger.info(f"Welcome message sent to {channel.name} in {guild.name}")
+                    welcome_sent = True
+                    break
                 except discord.errors.Forbidden:
+                    logger.warning(f"Forbidden to send message in {channel.name}")
                     continue
-    logger.warning("Could not find a channel to send a welcome message to.")
+                except Exception as e:
+                    logger.error(f"Error sending welcome message to {channel.name}: {e}")
+                    continue
+        if welcome_sent:
+            break
+    
+    if not welcome_sent:
+        logger.warning("Could not find a channel to send a welcome message to.")
 
-# This event is crucial for the bot to see messages and process commands.
 @bot.event
 async def on_message(message):
+    # Ignore messages from the bot itself
     if message.author == bot.user:
         return
 
-    # Log every message the bot sees
-    logger.info(f'Message received from {message.author}: {message.content}')
+    # Log every message the bot sees (but limit length for readability)
+    content_preview = message.content[:100] + "..." if len(message.content) > 100 else message.content
+    logger.info(f'Message from {message.author}: {content_preview}')
 
     # Check if the message matches the entry format
     lines = [line.strip() for line in message.content.splitlines() if line.strip()]
@@ -72,12 +88,13 @@ async def on_message(message):
         match = re.search(ENTRY_PATTERN, entry_text)
 
         if match:
-            # This logic is moved from discord_commands.py
+            logger.info(f"Detected dictionary entry format: {match.groups()}")
             term, pos, definition = match.groups()
             
             ety_lines = []
             example_lines = []
             collecting_ety = False
+            
             for line in lines:
                 if line.startswith("Etymology:"):
                     collecting_ety = True
@@ -92,34 +109,46 @@ async def on_message(message):
                 elif line.startswith("Ex") and ":" in line:
                     example_lines.append(line)
 
-            ety = [line for line in ety_lines if line.strip()] if ety_lines else None
+            ety = ety_lines if ety_lines else None
             
             try:
-                success = await dict_manager.add_entry(term, pos, definition, ety, example_lines)
+                success = dict_manager.add_entry(term, pos, definition, ety, example_lines)
                 if success:
                     await message.add_reaction('✅')
                     await message.channel.send(f"✅ Successfully added '{term}' to the dictionary.")
+                    logger.info(f"Successfully added entry: {term}")
                 else:
                     await message.add_reaction('❌')
-                    await message.channel.send(f"❌ Could not add '{term}'. It may already exist or the format is incorrect.")
+                    await message.channel.send(f"❌ Could not add '{term}'. It may already exist or there was an error.")
+                    logger.warning(f"Failed to add entry: {term}")
             except Exception as e:
-                logger.error(f"Error adding entry: {e}")
+                logger.error(f"Error adding entry '{term}': {e}")
                 await message.add_reaction('❌')
-                await message.channel.send(f"❌ An error occurred while adding the entry.")
-            return # Don't process commands if we've successfully added an entry
+                await message.channel.send(f"❌ An error occurred while adding '{term}': {str(e)}")
+            return # Don't process commands if we've handled an entry
 
-    # This is the single line that ensures other commands are processed if the message is not an entry
+    # Process commands if the message is not an entry
     await bot.process_commands(message)
 
+@bot.event
+async def on_command_error(ctx, error):
+    """Handle command errors."""
+    if isinstance(error, commands.CommandNotFound):
+        await ctx.send(f"❓ Unknown command. Use `!help` to see available commands.")
+    else:
+        logger.error(f"Command error in {ctx.command}: {error}")
+        await ctx.send(f"❌ An error occurred: {str(error)}")
 
 # Start the bot
 if __name__ == "__main__":
     if DISCORD_TOKEN:
         try:
+            logger.info("Starting Discord bot...")
             bot.run(DISCORD_TOKEN)
         except discord.errors.LoginFailure as e:
             logger.error(f"Failed to log in to Discord: {e}")
             logger.error("Please ensure your DISCORD_TOKEN environment variable is set correctly.")
+        except Exception as e:
+            logger.error(f"Unexpected error starting bot: {e}")
     else:
         logger.error("DISCORD_TOKEN environment variable not set. Please set it in your Fly.io secrets.")
-
