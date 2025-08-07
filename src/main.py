@@ -25,9 +25,22 @@ client = discord.Client(intents=intents)
 @client.event
 async def on_ready():
     logger.info(f'Logged in as {client.user}')
-    # The bot is now online and listening for messages in any server it's in.
-    # No initial message is sent, which means no CHANNEL_ID secret is needed.
-    # The `!hello` command should now work in any channel the bot can see.
+    # This code finds a suitable channel to send a welcome message.
+    # It will find the first text channel in the first server the bot is in.
+    # This avoids needing a hardcoded CHANNEL_ID secret.
+    for guild in client.guilds:
+        # Check all channels in the guild
+        for channel in guild.channels:
+            if isinstance(channel, discord.TextChannel):
+                try:
+                    await channel.send("Hello! I am online and ready to go.")
+                    # We send a message and then break out of the loops to avoid spamming
+                    return
+                except discord.errors.Forbidden:
+                    # If we don't have permission to send a message here, we just ignore it
+                    continue
+    # If the bot is in a server with no available text channels, log an error
+    logger.error("Could not find a channel to send a welcome message to.")
 
 # This event is triggered when a message is sent in any channel the bot can see
 @client.event
