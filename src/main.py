@@ -1,4 +1,4 @@
-# src/main.py 
+# src/main.py
 
 import os
 import discord
@@ -17,7 +17,7 @@ intents = discord.Intents.default()
 intents.messages = True
 intents.guilds = True
 intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)  # Disable default help
 
 # Initialize GitHub API and dictionary manager globally
 github_api = GitHubAPI()
@@ -42,10 +42,18 @@ async def on_ready():
 
     # Add the command cog to the bot
     try:
-        await bot.add_cog(DictionaryCommands(bot, dict_manager))
-        logger.info("DictionaryCommands cog loaded.")
+        cog = DictionaryCommands(bot, dict_manager)
+        await bot.add_cog(cog)
+        logger.info("DictionaryCommands cog loaded successfully.")
+        
+        # List all loaded commands for debugging
+        command_names = [cmd.name for cmd in bot.commands]
+        logger.info(f"Loaded commands: {command_names}")
     except Exception as e:
         logger.error(f"Failed to load DictionaryCommands cog: {e}")
+        # Log the full traceback for debugging
+        import traceback
+        logger.error(f"Full error: {traceback.format_exc()}")
 
     # Find a suitable channel to send a welcome message
     welcome_sent = False
