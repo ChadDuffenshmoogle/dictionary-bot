@@ -48,15 +48,20 @@ def sort_key_ignore_punct(s: str) -> str:
 
 
 class DictionaryEntry:
-    def __init__(self, term, pos, definition, etymology=None, examples=None):
+    def __init__(self, term, pos, definition, etymology=None, examples=None, raw_content=None):
         self.term = term
         self.pos = pos
         self.definition = definition
         self.etymology = etymology
         self.examples = examples or []
+        self.raw_content = raw_content  # Store original formatting
     
     def to_string(self):
         """Convert entry to string format for file output"""
+        if self.raw_content:
+            # Use the original raw content if available (preserves exact formatting)
+            return self.raw_content
+        
         if self.etymology or self.examples:
             # Entry with etymology/examples needs hyphen separators
             result = "---------------------------------------------\n"
@@ -64,7 +69,8 @@ class DictionaryEntry:
                 result += f"Etymology: {self.etymology}\n\n"
             result += f"{self.term} ({self.pos}) - {self.definition}"
             if self.examples:
-                result += "\n" + "\n".join(self.examples)
+                for example in self.examples:
+                    result += f"\n{example}"
             result += "\n---------------------------------------------"
             return result
         else:
@@ -81,41 +87,59 @@ def parse_dictionary_entries(content):
     
     body = content.split("-----DICTIONARY PROPER-----\n\n", 1)[1]
     
-    # Split by double newlines, but be careful about hyphen sections
-    parts = body.split('\n\n')
+    # Split the content more carefully to preserve formatting
+    sections = []
+    current_section = []
+    lines = body.split('\n')
     
     i = 0
-    while i < len(parts):
-        part = parts[i].strip()
+    while i < len(lines):
+        line = lines[i]
         
-        if part.startswith("---------------------------------------------"):
-            # This is a complex entry with etymology/examples
-            entry_content = [part]
+        if line.strip() == "---------------------------------------------":
+            if current_section:
+                sections.append('\n'.join(current_section).strip())
+                current_section = []
+            
+            # Start collecting hyphen section
+            hyphen_section = [line]
             i += 1
             
-            # Collect all parts until we hit the closing hyphens or end
-            while i < len(parts):
-                next_part = parts[i].strip()
-                entry_content.append(next_part)
-                
-                if next_part.endswith("---------------------------------------------"):
+            while i < len(lines):
+                hyphen_section.append(lines[i])
+                if lines[i].strip() == "---------------------------------------------":
+                    sections.append('\n'.join(hyphen_section))
                     break
                 i += 1
-            
-            # Parse the complex entry
-            full_text = '\n\n'.join(entry_content)
-            entry = parse_complex_entry(full_text)
-            if entry:
-                entries.append(entry)
-                
-        elif re.match(ENTRY_PATTERN, part):
-            # Simple entry
-            match = re.match(ENTRY_PATTERN, part)
-            if match:
-                term, pos, definition = match.groups()
-                entries.append(DictionaryEntry(term, pos, definition))
+        else:
+            current_section.append(line)
         
         i += 1
+    
+    # Add any remaining content
+    if current_section:
+        remaining = '\n'.join(current_section).strip()
+        if remaining:
+            # Split by double newlines for simple entries
+            simple_entries = [e.strip() for e in remaining.split('\n\n') if e.strip()]
+            sections.extend(simple_entries)
+    
+    # Parse each section
+    for section in sections:
+        if not section.strip():
+            continue
+            
+        if section.strip().startswith("---------------------------------------------"):
+            # Complex entry with etymology/examples
+            entry = parse_complex_entry(section)
+            if entry:
+                entries.append(entry)
+        else:
+            # Simple entry
+            match = re.match(ENTRY_PATTERN, section.strip())
+            if match:
+                term, pos, definition = match.groups()
+                entries.append(DictionaryEntry(term, pos, definition, raw_content=section.strip()))
     
     return entries
 
@@ -128,52 +152,95 @@ def parse_complex_entry(text):
     examples = []
     
     i = 0
+    collecting_etymology = False
+    etymology_lines = []
+    
     while i < len(lines):
         line = lines[i].strip()
         
         if line.startswith("Etymology:"):
-            # Start collecting etymology
+            collecting_etymology = True
             ety_text = line[10:].strip()
-            ety_lines = [ety_text] if ety_text else []
-            i += 1
+            etymology_lines = [ety_text] if ety_text else []
             
-            # Continue collecting until we hit the main entry or end
-            while i < len(lines):
-                next_line = lines[i].strip()
-                if re.match(ENTRY_PATTERN, next_line):
-                    # Found the main entry
-                    etymology = '\n'.join(ety_lines).strip()
-                    match = re.match(ENTRY_PATTERN, next_line)
-                    term, pos, definition = match.groups()
-                    i += 1
-                    break
-                elif next_line and not next_line.startswith("-----"):
-                    ety_lines.append(lines[i])
-                i += 1
-            continue
+        elif collecting_etymology and line and not line.startswith("-----") and not re.match(ENTRY_PATTERN, line):
+            etymology_lines.append(lines[i])
             
         elif re.match(ENTRY_PATTERN, line):
             # Main entry line
+            if collecting_etymology and etymology_lines:
+                etymology = '\n'.join(etymology_lines).strip()
+                collecting_etymology = False
+            
             match = re.match(ENTRY_PATTERN, line)
             term, pos, definition = match.groups()
             
-        elif line.startswith("Ex") and ":" in line:
+        elif line.startswith("Ex") and ":" in line and term:
             # Example line
             examples.append(line)
             
-        elif line.startswith("\t") or (line and not line.startswith("-----") and term):
-            # Additional content (indented text, continued definition, etc.)
-            if not examples:
-                examples.append(line)
+        elif line and not line.startswith("-----") and term and not re.match(ENTRY_PATTERN, line):
+            # Additional content (could be examples, notes, etc.)
+            examples.append(line)
         
         i += 1
     
     if term and pos and definition:
-        return DictionaryEntry(term, pos, definition, etymology, examples)
+        return DictionaryEntry(term, pos, definition, etymology, examples, text)
     return None
 
 
-async def add_entry(term, pos, definition, ety_lines=None):
+async def get_added_term_for_version(version):
+    """Get the term that was added in a specific version by comparing with previous version"""
+    try:
+        # Parse version number
+        m = re.search(r"v\.?(\d+)\.(\d+)\.(\d+)", version, re.IGNORECASE)
+        if not m:
+            return None
+        
+        major, minor, patch = map(int, m.groups())
+        if patch == 0:
+            return None  # Can't get previous version
+            
+        # Get previous version
+        prev_version = f"v{major}.{minor}.{patch-1}"
+        
+        current_path = get_filename(version)
+        prev_path = get_filename(prev_version)
+        
+        if not os.path.exists(current_path) or not os.path.exists(prev_path):
+            return None
+        
+        # Read both files and compare corpus
+        with open(current_path, "r", encoding="utf-8") as f:
+            current_content = f.read()
+        with open(prev_path, "r", encoding="utf-8") as f:
+            prev_content = f.read()
+        
+        # Extract corpus from both
+        current_corpus = set()
+        prev_corpus = set()
+        
+        current_match = re.search(r"Corpus:\s*(.*?)\s*\n\n", current_content, re.DOTALL | re.IGNORECASE)
+        if current_match:
+            current_corpus = {t.strip() for t in current_match.group(1).split(",") if t.strip()}
+        
+        prev_match = re.search(r"Corpus:\s*(.*?)\s*\n\n", prev_content, re.DOTALL | re.IGNORECASE)
+        if prev_match:
+            prev_corpus = {t.strip() for t in prev_match.group(1).split(",") if t.strip()}
+        
+        # Find the difference
+        added_terms = current_corpus - prev_corpus
+        if added_terms:
+            return list(added_terms)[0]  # Return the first (should be only one)
+            
+    except Exception as e:
+        print(f"[DEBUG] Error getting added term for {version}: {e}")
+    
+    return None
+
+
+async def add_entry(term, pos, definition, ety_lines=None, example_lines=None):
     # Use CDT timezone
     cdt = pytz.timezone('America/Chicago')
     now = datetime.now(cdt)
@@ -229,7 +296,8 @@ async def add_entry(term, pos, definition, ety_lines=None):
 
     # Create new entry
     etymology = "\n".join(ety_lines).strip() if ety_lines else None
-    new_entry = DictionaryEntry(term, pos, definition, etymology)
+    examples = example_lines if example_lines else []
+    new_entry = DictionaryEntry(term, pos, definition, etymology, examples)
     
     # Add to entries and sort
     entries.append(new_entry)
@@ -238,6 +306,8 @@ async def add_entry(term, pos, definition, ety_lines=None):
 
     if etymology:
         print(f"[DEBUG] Etymology stored for '{term}'")
+    if examples:
+        print(f"[DEBUG] Examples stored for '{term}': {len(examples)}")
 
     # Build the new file content
     content = f"{FILE_PREFIX} {new_version} - {timestamp}\n\nCorpus:\n" + ", ".join(corpus) + "\n\n"
@@ -254,11 +324,14 @@ async def add_entry(term, pos, definition, ety_lines=None):
     with open(new_path, "w", encoding="utf-8") as f:
         f.write(content)
     print(f"[DEBUG] Wrote new file: {new_path}")
+    print(f"[DEBUG] File exists check: {os.path.exists(new_path)}")
 
 
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user}")
+    print(f"[DEBUG] Current working directory: {os.getcwd()}")
+    print(f"[DEBUG] Files in current directory: {os.listdir('.')}")
 
     # Send connection message to the first available channel
     for guild in client.guilds:
@@ -316,7 +389,7 @@ async def on_message(msg):
 `!stats` - Show dictionary statistics
 `!random` - Show a random dictionary entry
 `!search <query>` - Search for terms containing the query (includes etymology)
-`!versions` - List all available versions
+`!versions` - List all available versions with added terms
 `!help` - Show this help message
 
 **Adding Entries:**
@@ -337,7 +410,7 @@ Term (noun) - the definition
         return
 
     # Look for dictionary entry pattern in any line
-    term, pos, definition, ety = None, None, None, None
+    term, pos, definition, ety, examples = None, None, None, None, []
 
     for i, line in enumerate(lines):
         m = re.match(ENTRY_PATTERN, line)
@@ -349,8 +422,9 @@ Term (noun) - the definition
     if not term:
         return  # No dictionary entry found
 
-    # Look for etymology in the message
+    # Look for etymology and examples in the message
     ety_lines = []
+    example_lines = []
     collecting_ety = False
 
     for line in lines:
@@ -365,14 +439,20 @@ Term (noun) - the definition
                 ety_lines.append(line)
         elif collecting_ety and re.match(ENTRY_PATTERN, line):
             # Hit another entry, stop collecting etymology
-            break
+            collecting_ety = False
+        elif line.startswith("Ex") and ":" in line:
+            # Example line
+            example_lines.append(line)
 
-    # Clean up etymology lines
+    # Clean up lines
     if ety_lines:
         ety = [line for line in ety_lines if line.strip()]
         print(f"[DEBUG] Found etymology: {len(ety)} lines")
+    
+    if example_lines:
+        print(f"[DEBUG] Found examples: {len(example_lines)} lines")
 
-    await add_entry(term, pos, definition, ety)
+    await add_entry(term, pos, definition, ety, example_lines)
     # React to the user's message 
     await msg.add_reaction('✅')
     await asyncio.sleep(4)
@@ -481,17 +561,14 @@ async def search_entries(channel, query):
 
     entries = parse_dictionary_entries(content)
 
-    # Search in terms, definitions, and etymology
+    # Search only in terms and definitions (NOT etymology)
     matches = []
     for entry in entries:
         # Search in term
         if query.lower() in entry.term.lower():
             matches.append(entry)
-        # Search in definition
+        # Search in definition  
         elif query.lower() in entry.definition.lower():
-            matches.append(entry)
-        # Search in etymology if present
-        elif entry.etymology and query.lower() in entry.etymology.lower():
             matches.append(entry)
 
     if not matches:
@@ -541,17 +618,27 @@ async def list_versions(channel):
             version = f"v{m.group(1)}.{m.group(2)}.{m.group(3)}"
             file_size = round(
                 os.path.getsize(os.path.join(FILE_FOLDER, f)) / 1024, 1)
-            versions.append((version, file_size))
+            
+            # Get the added term for this version
+            added_term = await get_added_term_for_version(version)
+            versions.append((version, file_size, added_term))
 
     # Sort versions
     versions.sort(key=lambda x: [int(i) for i in x[0][1:].split('.')])
 
-    version_list = "\n".join([f"{v[0]} ({v[1]} KB)" for v in versions])
+    version_list = []
+    for v in versions:
+        line = f"{v[0]} ({v[1]} KB)"
+        if v[2]:  # If we found an added term
+            line += f" - added '{v[2]}'"
+        version_list.append(line)
+    
+    version_text = "\n".join(version_list)
     latest = versions[-1][0] if versions else "Unknown"
 
     msg = f"""Available Dictionary Versions:
 
-{version_list}
+{version_text}
 
 Latest: {latest}
 Use `!getversion <vX.X.X>` to download any version."""
