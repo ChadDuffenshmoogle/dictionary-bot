@@ -38,8 +38,8 @@ async def on_ready():
     try:
         latest = dict_manager.find_latest_version()
         logger.info(f"Successfully connected to GitHub. Latest version: {latest}")
-        # Set status to show latest version
-        await bot.change_presence(activity=discord.Game(f"📖 Dictionary {latest}"))
+        # Set status to show latest version with a custom activity
+        await bot.change_presence(activity=discord.CustomActivity(name=f"📖 Dictionary {latest}"))
     except Exception as e:
         logger.error(f"Failed to connect to GitHub during startup: {e}")
         await bot.change_presence(activity=discord.Game("❌ GitHub connection failed"))
@@ -137,7 +137,8 @@ async def on_message(message):
                     # Update the bot's status to show the latest dictionary version and the new term.
                     latest_version = dict_manager.find_latest_version()
                     status_text = f"📖 v{latest_version} - {truncated_term}"
-                    await bot.change_presence(activity=discord.Game(status_text))
+                    # Use CustomActivity for a "regular" status without the "Playing" prefix
+                    await bot.change_presence(activity=discord.CustomActivity(name=status_text))
 
                     # Remove the reaction after 4 seconds
                     await asyncio.sleep(4)
@@ -169,7 +170,8 @@ async def on_command_error(ctx, error):
         # Reset to normal status
         try:
             latest = dict_manager.find_latest_version()
-            await bot.change_presence(activity=discord.Game(f"📖 Dictionary {latest}"))
+            # Reset to a custom activity on command error
+            await bot.change_presence(activity=discord.CustomActivity(name=f"📖 Dictionary {latest}"))
         except:
             await bot.change_presence(activity=discord.Game("📖 Dictionary Bot"))
 
