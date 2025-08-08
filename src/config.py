@@ -14,7 +14,7 @@ DISCORD_TOKEN = os.environ.get('DISCORD_TOKEN') # Ensure this is the correct env
 
 # GitHub Configuration
 GITHUB_OWNER = "ChadDuffenshmoogle"
-GITHUB_REPO = "dictionary-bot"
+GITHUB_REPO = "dictionary-versions"  # ← Changed from "dictionary-bot"  
 GITHUB_BRANCH = "main"
 
 # IMPORTANT: Fix the environment variable name
