@@ -88,7 +88,6 @@ async def on_ready():
     if not welcome_sent:
         logger.warning("Could not find a channel to send a welcome message to.")
         await bot.change_presence(activity=discord.Game("⚠️ No channel access"))
-
 @bot.event
 async def on_message(message):
     # Ignore messages from the bot itself
@@ -113,25 +112,86 @@ async def on_message(message):
             ety_lines = []
             example_lines = []
             collecting_ety = False
+            main_entry_found = False
             
             for line in lines:
-                if line.startswith("Etymology:"):
+                line_stripped = line.strip()
+                
+                # Skip Discord user attribution lines (timestamp artifacts)
+                if "—" in line and ("PM" in line or "AM" in line):
+                    continue
+                
+                # Check for etymology
+                if line_stripped.startswith("Etymology:"):
                     collecting_ety = True
-                    ety_text = line[10:].strip()
+                    ety_text = line_stripped[10:].strip()  # Remove "Etymology:" prefix
                     if ety_text:
                         ety_lines.append(ety_text)
-                elif collecting_ety and line and not re.match(ENTRY_PATTERN, line):
-                    if not line.startswith(("-----", "——————")):
-                        ety_lines.append(line)
-                elif collecting_ety and re.match(ENTRY_PATTERN, line):
-                    collecting_ety = False
-                elif line.startswith("Ex") and ":" in line:
-                    example_lines.append(line)
+                    continue
+                
+                # Continue collecting etymology until we hit the main entry
+                elif collecting_ety and not re.match(ENTRY_PATTERN, line_stripped):
+                    if line_stripped and not line_stripped.startswith(("Ex:", "Ex.", "Example:")):
+                        ety_lines.append(line_stripped)
+                    continue
+                
+                # Main entry line
+                elif re.match(ENTRY_PATTERN, line_stripped):
+                    collecting_ety = False  # Stop collecting etymology
+                    main_entry_found = True
+                    # Update term, pos, definition in case there are multiple matches
+                    match_main = re.match(ENTRY_PATTERN, line_stripped)
+                    if match_main:
+                        term, pos, definition = match_main.groups()
+                    continue
+                
+                # Check for examples (after main entry or standalone)
+                elif (line_stripped.startswith("Ex:") or 
+                      line_stripped.startswith("Ex.") or 
+                      line_stripped.startswith("Example:")):
+                    # Extract the example text
+                    if line_stripped.startswith("Ex:"):
+                        example_text = line_stripped[3:].strip()
+                        if example_text:
+                            example_lines.append(f"Ex: {example_text}")
+                        else:
+                            example_lines.append("Ex:")
+                    elif line_stripped.startswith("Ex."):
+                        example_text = line_stripped[3:].strip()
+                        if example_text:
+                            example_lines.append(f"Ex: {example_text}")
+                        else:
+                            example_lines.append("Ex:")
+                    else:  # "Example:"
+                        example_text = line_stripped[8:].strip()
+                        if example_text:
+                            example_lines.append(f"Ex: {example_text}")
+                        else:
+                            example_lines.append("Ex:")
+                    continue
+                
+                # Additional example lines or quoted examples (without Ex: prefix)
+                elif main_entry_found and line_stripped and not re.match(ENTRY_PATTERN, line_stripped):
+                    # This might be a continuation or additional quoted example
+                    if (line_stripped.startswith('"') and line_stripped.endswith('"')) or \
+                       (line_stripped.startswith("'") and line_stripped.endswith("'")):
+                        example_lines.append(f"Ex: {line_stripped}")
+                    elif line_stripped and len(example_lines) > 0:
+                        # Continuation of previous example
+                        example_lines.append(line_stripped)
 
+            # Prepare etymology and examples for the bot
             ety = ety_lines if ety_lines else None
+            examples = example_lines if example_lines else None
+            
+            # Debug logging
+            if ety:
+                logger.info(f"Found etymology: {ety}")
+            if examples:
+                logger.info(f"Found examples: {examples}")
             
             try:
-                success = dict_manager.add_entry(term, pos, definition, ety, example_lines)
+                success = dict_manager.add_entry(term, pos, definition, ety, examples)
                 if success:
                     # Truncate the term for the status if it's too long
                     truncated_term = term if len(term) <= 50 else term[:47] + '...'
