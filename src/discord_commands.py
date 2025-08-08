@@ -8,6 +8,7 @@ import pytz
 from datetime import datetime
 from typing import TYPE_CHECKING, List
 from discord.ext import commands
+from .dictionary_parser import count_dictionary_entries
 
 # To avoid circular imports for type hinting
 if TYPE_CHECKING:
@@ -58,6 +59,7 @@ class DictionaryCommands(commands.Cog):
 
         corpus = self.dict_manager.get_all_corpus(latest)
         corpus_count = len(corpus)
+        entry_count = count_dictionary_entries(content)
         ety_count = content.count("Etymology:")
         size_kb = round(len(content.encode('utf-8')) / 1024, 1)
 
@@ -68,7 +70,8 @@ class DictionaryCommands(commands.Cog):
         stats_msg = f"""📊 **Unicyclist Dictionary Statistics** as of {formatted_datetime}:
 
 **Latest Version:** {latest}
-**Entries:** {corpus_count:,}
+**Corpus Terms:** {corpus_count:,}
+**Dictionary Entries:** {entry_count:,}
 **Entries with Etymology:** {ety_count:,}
 **File Size:** {size_kb} KB
 **Storage:** GitHub Repository

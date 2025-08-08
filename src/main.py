@@ -136,7 +136,7 @@ async def on_message(message):
 
                     # Update the bot's status to show the latest dictionary version and the new term.
                     latest_version = dict_manager.find_latest_version()
-                    status_text = f"📖 v{latest_version} - {truncated_term}"
+                    status_text = f"📖 {latest_version} - {truncated_term}"
                     # Use CustomActivity for a "regular" status without the "Playing" prefix
                     await bot.change_presence(activity=discord.CustomActivity(name=status_text))
 

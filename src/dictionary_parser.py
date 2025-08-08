@@ -150,3 +150,24 @@ def get_corpus_from_content(content: str) -> List[str]:
         corpus_text = corpus_match.group(1).strip()
         return [t.strip() for t in corpus_text.split(",") if t.strip()]
     return []
+
+def count_dictionary_entries(content: str) -> int:
+    """Count actual dictionary entries in the proper format."""
+    if "-----DICTIONARY PROPER-----" not in content:
+        return 0
+    
+    parts = content.split("-----DICTIONARY PROPER-----\n\n", 1)
+    if len(parts) < 2:
+        return 0
+    
+    body = parts[1]
+    entry_count = 0
+    
+    # Count lines that match the dictionary entry pattern
+    lines = body.split('\n')
+    for line in lines:
+        line = line.strip()
+        if re.match(ENTRY_PATTERN, line):
+            entry_count += 1
+    
+    return entry_count
