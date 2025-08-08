@@ -100,89 +100,165 @@ async def on_message(message):
     logger.info(f'Message from {message.author}: {content_preview}')
 
     # Check if the message matches the entry format
-    entry_text = message.content.strip()
-    match = re.search(ENTRY_PATTERN, entry_text, re.MULTILINE)
+    lines = [line.strip() for line in message.content.splitlines() if line.strip()]
+    if lines:
+        entry_text = "\n".join(lines)
+        # Check if the core definition line is present
+        match = re.search(ENTRY_PATTERN, entry_text)
 
-    if match:
-        logger.info(f"Detected dictionary entry format: {match.groups()}")
-        term, pos, definition = match.groups()
-        
-        ety_lines = []
-        example_lines = []
-        
-        # Split the message content into lines to parse for etymology and examples
-        lines = [line.strip() for line in entry_text.splitlines() if line.strip()]
-        
-        # Iterate through the lines to find additional information
-        for i, line in enumerate(lines):
-            # Skip the main entry line as it's already parsed
-            if line == match.group(0).strip():
-                continue
-
-            # Check for Etymology
-            if line.startswith("Etymology:"):
-                # Clean up the etymology text
-                ety_text = line[len("Etymology:"):].strip()
-                if ety_text:
-                    ety_lines.append(ety_text)
-                
-            # Check for examples
-            elif line.startswith(("Ex:", "Ex.", "Example:")):
-                # Clean up the example text
-                example_text = line.split(":", 1)[-1].strip()
-                if example_text:
-                    example_lines.append(f"Ex: {example_text}")
+        if match:
+            logger.info(f"Detected dictionary entry format: {match.groups()}")
+            term, pos, definition = match.groups()
             
-            # Check for quoted examples without a prefix
-            elif (line.startswith(('"', "'")) and line.endswith(('"', "'"))):
-                example_lines.append(f"Ex: {line}")
+            # Enhanced parsing for additional details
+            ety_lines = []
+            example_lines = []
+            additional_info = []
+            pronunciation = None
+            collecting_ety = False
+            main_entry_found = False
             
-            # Handle multi-line etymology or example blocks
-            else:
-                # If the previous line was an etymology line, continue adding to it
-                if i > 0 and lines[i-1].startswith("Etymology:"):
-                    ety_lines.append(line)
-                # If the previous line was an example line, continue adding to it
-                elif i > 0 and (lines[i-1].startswith(("Ex:", "Ex.", "Example:")) or (lines[i-1].startswith(('"', "'")) and lines[i-1].endswith(('"', "'")))):
-                    example_lines.append(line)
-
-        # Prepare etymology and examples for the bot
-        ety = ety_lines if ety_lines else None
-        examples = example_lines if example_lines else None
-        
-        # Debug logging
-        if ety:
-            logger.info(f"Found etymology: {ety}")
-        if examples:
-            logger.info(f"Found examples: {examples}")
-        
-        try:
-            success = dict_manager.add_entry(term, pos, definition, ety, examples)
-            if success:
-                # Truncate the term for the status if it's too long
-                truncated_term = term if len(term) <= 50 else term[:47] + '...'
+            # Extract pronunciation from term if present
+            if ' /' in term and '/' in term:
+                pron_match = re.search(r'(.+?)\s+(/[^/]+/)', term)
+                if pron_match:
+                    term = pron_match.group(1).strip()
+                    pronunciation = pron_match.group(2)
+            
+            for line in lines:
+                line_stripped = line.strip()
                 
-                await message.add_reaction('✅')
-                logger.info(f"Successfully added entry: {term}")
+                # Skip Discord user attribution lines (timestamp artifacts)
+                if "—" in line and ("PM" in line or "AM" in line):
+                    continue
+                
+                # Check for etymology
+                if line_stripped.startswith("Etymology:"):
+                    collecting_ety = True
+                    ety_text = line_stripped[10:].strip()  # Remove "Etymology:" prefix
+                    if ety_text:
+                        ety_lines.append(ety_text)
+                    continue
+                
+                # Continue collecting etymology until we hit the main entry
+                elif collecting_ety and not re.match(ENTRY_PATTERN, line_stripped):
+                    if line_stripped and not line_stripped.startswith(("Ex:", "Ex.", "Example:")):
+                        ety_lines.append(line_stripped)
+                    continue
+                
+                # Main entry line
+                elif re.match(ENTRY_PATTERN, line_stripped):
+                    collecting_ety = False  # Stop collecting etymology
+                    main_entry_found = True
+                    # Update term, pos, definition in case there are multiple matches
+                    match_main = re.match(ENTRY_PATTERN, line_stripped)
+                    if match_main:
+                        new_term, new_pos, new_definition = match_main.groups()
+                        
+                        # Re-extract pronunciation from the updated term
+                        if ' /' in new_term and '/' in new_term:
+                            pron_match = re.search(r'(.+?)\s+(/[^/]+/)', new_term)
+                            if pron_match:
+                                term = pron_match.group(1).strip()
+                                pronunciation = pron_match.group(2)
+                            else:
+                                term = new_term
+                        else:
+                            term = new_term
+                        
+                        pos = new_pos
+                        definition = new_definition
+                    continue
+                
+                # Check for examples (after main entry or standalone)
+                elif (line_stripped.startswith("Ex:") or 
+                      line_stripped.startswith("Ex.") or 
+                      line_stripped.startswith("Example:")):
+                    # Extract the example text
+                    if line_stripped.startswith("Ex:"):
+                        example_text = line_stripped[3:].strip()
+                        if example_text:
+                            example_lines.append(f"Ex: {example_text}")
+                        else:
+                            example_lines.append("Ex:")
+                    elif line_stripped.startswith("Ex."):
+                        example_text = line_stripped[3:].strip()
+                        if example_text:
+                            example_lines.append(f"Ex: {example_text}")
+                        else:
+                            example_lines.append("Ex:")
+                    else:  # "Example:"
+                        example_text = line_stripped[8:].strip()
+                        if example_text:
+                            example_lines.append(f"Ex: {example_text}")
+                        else:
+                            example_lines.append("Ex:")
+                    continue
+                
+                # Additional example lines or quoted examples (without Ex: prefix)
+                elif main_entry_found and line_stripped and not re.match(ENTRY_PATTERN, line_stripped):
+                    # This might be a continuation or additional quoted example
+                    if (line_stripped.startswith('"') and line_stripped.endswith('"')) or \
+                       (line_stripped.startswith("'") and line_stripped.endswith("'")):
+                        example_lines.append(f"Ex: {line_stripped}")
+                    elif line_stripped.startswith("-") or line_stripped.startswith("•"):
+                        # Additional structured info (bullet points, sub-definitions, etc.)
+                        additional_info.append(line_stripped)
+                    elif line_stripped and len(example_lines) > 0:
+                        # Continuation of previous example
+                        example_lines.append(line_stripped)
+                    else:
+                        # Other additional information
+                        additional_info.append(line_stripped)
 
-                # Update the bot's status to show the latest dictionary version and the new term.
-                latest_version = dict_manager.find_latest_version()
-                status_text = f"📖 {latest_version} - {truncated_term}"
-                # Use CustomActivity for a "regular" status without the "Playing" prefix
-                await bot.change_presence(activity=discord.CustomActivity(name=status_text))
+            # Prepare etymology, examples, and additional info for the bot
+            ety = ety_lines if ety_lines else None
+            examples = example_lines if example_lines else None
+            additional = additional_info if additional_info else None
+            
+            # Debug logging
+            if ety:
+                logger.info(f"Found etymology: {ety}")
+            if examples:
+                logger.info(f"Found examples: {examples}")
+            if pronunciation:
+                logger.info(f"Found pronunciation: {pronunciation}")
+            if additional:
+                logger.info(f"Found additional info: {additional}")
+            
+            try:
+                success = dict_manager.add_entry(
+                    term, pos, definition, 
+                    ety_lines=ety, 
+                    example_lines=examples,
+                    pronunciation=pronunciation,
+                    additional_info=additional
+                )
+                if success:
+                    # Truncate the term for the status if it's too long
+                    truncated_term = term if len(term) <= 50 else term[:47] + '...'
+                    
+                    await message.add_reaction('✅')
+                    logger.info(f"Successfully added entry: {term}")
 
-                # Remove the reaction after 4 seconds
-                await asyncio.sleep(4)
-                await message.remove_reaction('✅', bot.user)
-            else:
+                    # Update the bot's status to show the latest dictionary version and the new term.
+                    latest_version = dict_manager.find_latest_version()
+                    status_text = f"📖 {latest_version} - {truncated_term}"
+                    # Use CustomActivity for a "regular" status without the "Playing" prefix
+                    await bot.change_presence(activity=discord.CustomActivity(name=status_text))
+
+                    # Remove the reaction after 4 seconds
+                    await asyncio.sleep(4)
+                    await message.remove_reaction('✅', bot.user)
+                else:
+                    await message.add_reaction('❌')
+                    await message.channel.send(f"❌ Could not add '{term}'. It may already exist or there was an error.")
+                    logger.warning(f"Failed to add entry: {term}")
+            except Exception as e:
+                logger.error(f"Error adding entry '{term}': {e}")
                 await message.add_reaction('❌')
-                await message.channel.send(f"❌ Could not add '{term}'. It may already exist or there was an error.")
-                logger.warning(f"Failed to add entry: {term}")
-        except Exception as e:
-            logger.error(f"Error adding entry '{term}': {e}")
-            await message.add_reaction('❌')
-            await message.channel.send(f"❌ An error occurred while adding '{term}': {str(e)}")
-        return # Don't process commands if we've handled an entry
+                await message.channel.send(f"❌ An error occurred while adding '{term}': {str(e)}")
+            return # Don't process commands if we've handled an entry
 
     # Process commands if the message is not an entry
     await bot.process_commands(message)

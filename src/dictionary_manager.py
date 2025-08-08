@@ -62,7 +62,7 @@ class DictionaryManager:
             return get_corpus_from_content(content)
         return []
 
-    def add_entry(self, term: str, pos: str, definition: str, ety_lines: Optional[List[str]] = None, example_lines: Optional[List[str]] = None) -> bool:
+    def add_entry(self, term: str, pos: str, definition: str, ety_lines: Optional[List[str]] = None, example_lines: Optional[List[str]] = None, pronunciation: Optional[str] = None, additional_info: Optional[List[str]] = None) -> bool:
         """Adds a new entry to the dictionary, updates version, and uploads to GitHub."""
         cdt = pytz.timezone('America/Chicago')
         now = datetime.now(cdt)

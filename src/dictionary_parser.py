@@ -10,38 +10,67 @@ def sort_key_ignore_punct(s: str) -> str:
 
 class DictionaryEntry:
     """Represents a single dictionary entry."""
-    def __init__(self, term: str, pos: str, definition: str, etymology: Optional[str] = None, examples: Optional[List[str]] = None, raw_content: Optional[str] = None):
+    def __init__(self, term: str, pos: str, definition: str, etymology: Optional[str] = None, examples: Optional[List[str]] = None, raw_content: Optional[str] = None, pronunciation: Optional[str] = None, additional_info: Optional[List[str]] = None):
         self.term = term
         self.pos = pos
         self.definition = definition
         self.etymology = etymology
         self.examples = examples or []
         self.raw_content = raw_content
+        self.pronunciation = pronunciation
+        self.additional_info = additional_info or []
 
     def to_string(self) -> str:
-        """Converts the entry to its string format for file output."""
-        if self.raw_content and not self.etymology and not self.examples:
+        """Converts the entry to its string format for file output using consistent formatting."""
+        # If this is a simple entry with no additional details, keep it on one line
+        if (not self.etymology and not self.examples and not self.pronunciation and 
+            not self.additional_info and self.raw_content and 
+            '\n' not in self.raw_content.strip()):
             return self.raw_content.strip()
 
-        if self.etymology or self.examples:
+        # Check if this entry needs the hyphen format (has additional details)
+        needs_hyphens = (self.etymology or self.examples or self.pronunciation or 
+                        self.additional_info or (self.raw_content and '\n' in self.raw_content))
+
+        if needs_hyphens:
             result = "---------------------------------------------\n"
+            
+            # Add etymology if present
             if self.etymology:
                 result += f"Etymology: {self.etymology}\n\n"
-            result += f"{self.term} ({self.pos}) - {self.definition}"
+            
+            # Main entry line with pronunciation if present
+            main_line = f"{self.term}"
+            if self.pronunciation:
+                main_line += f" {self.pronunciation}"
+            main_line += f" ({self.pos}) - {self.definition}"
+            result += main_line
+            
+            # Add additional info if present
+            if self.additional_info:
+                for info in self.additional_info:
+                    result += f"\n{info}"
+            
+            # Add examples if present
             if self.examples:
                 for example in self.examples:
                     result += f"\n{example}"
+            
             result += "\n---------------------------------------------"
             return result
         else:
-            return f"{self.term} ({self.pos}) - {self.definition}"
+            # Simple one-line entry
+            main_line = f"{self.term}"
+            if self.pronunciation:
+                main_line += f" {self.pronunciation}"
+            main_line += f" ({self.pos}) - {self.definition}"
+            return main_line
 
 def parse_dictionary_entries(content: str) -> List[DictionaryEntry]:
-    """Parses dictionary content into DictionaryEntry objects."""
+    """Parses dictionary content into DictionaryEntry objects using consistent formatting."""
     entries = []
 
     if "-----DICTIONARY PROPER-----" not in content:
-        # logger.warning("No dictionary proper section found") # Logger needs to be passed or imported from config
         return entries
 
     parts = content.split("-----DICTIONARY PROPER-----\n\n", 1)
@@ -59,7 +88,7 @@ def parse_dictionary_entries(content: str) -> List[DictionaryEntry]:
             i += 1
             continue
 
-        # Handle complex entries with separators
+        # Handle complex entries with separators (consistent hyphen format)
         if section.strip() == "---------------------------------------------":
             complex_entry_parts = [section]
             i += 1
@@ -82,7 +111,18 @@ def parse_dictionary_entries(content: str) -> List[DictionaryEntry]:
             match = re.match(ENTRY_PATTERN, section)
             if match:
                 term, pos, definition = match.groups()
-                entries.append(DictionaryEntry(term, pos, definition, raw_content=section))
+                # Check for pronunciation in the term part
+                pronunciation = None
+                if ' /' in term and '/ ' in term:
+                    term_parts = term.split(' /')
+                    if len(term_parts) == 2:
+                        actual_term = term_parts[0].strip()
+                        pron_part = '/' + term_parts[1]
+                        if pron_part.endswith('/'):
+                            pronunciation = pron_part
+                            term = actual_term
+                
+                entries.append(DictionaryEntry(term, pos, definition, raw_content=section, pronunciation=pronunciation))
             else:
                 # Multi-line simple entry
                 lines = section.split('\n')
@@ -90,20 +130,32 @@ def parse_dictionary_entries(content: str) -> List[DictionaryEntry]:
                     match = re.match(ENTRY_PATTERN, line.strip())
                     if match:
                         term, pos, definition = match.groups()
-                        entries.append(DictionaryEntry(term, pos, definition, raw_content=section))
+                        # Check for pronunciation
+                        pronunciation = None
+                        if ' /' in term and '/ ' in term:
+                            term_parts = term.split(' /')
+                            if len(term_parts) == 2:
+                                actual_term = term_parts[0].strip()
+                                pron_part = '/' + term_parts[1]
+                                if pron_part.endswith('/'):
+                                    pronunciation = pron_part
+                                    term = actual_term
+                        
+                        entries.append(DictionaryEntry(term, pos, definition, raw_content=section, pronunciation=pronunciation))
                         break
 
         i += 1
 
-    # logger.info(f"Parsed {len(entries)} dictionary entries") # Logger needs to be passed or imported from config
     return entries
 
 def parse_complex_entry(text: str) -> Optional[DictionaryEntry]:
-    """Parses a complex entry with etymology and/or examples."""
+    """Parses a complex entry with etymology and/or examples using consistent formatting."""
     lines = text.split('\n')
     etymology = None
     term = pos = definition = None
+    pronunciation = None
     examples = []
+    additional_info = []
     etymology_lines = []
     collecting_etymology = False
 
@@ -123,6 +175,7 @@ def parse_complex_entry(text: str) -> Optional[DictionaryEntry]:
             etymology_lines.append(line.rstrip())
             continue
 
+        # Check for main entry pattern
         match = re.match(ENTRY_PATTERN, line_stripped)
         if match:
             if collecting_etymology and etymology_lines:
@@ -130,16 +183,32 @@ def parse_complex_entry(text: str) -> Optional[DictionaryEntry]:
                 collecting_etymology = False
 
             term, pos, definition = match.groups()
+            
+            # Extract pronunciation if present
+            if ' /' in term and '/' in term:
+                # Look for pronunciation pattern
+                pron_match = re.search(r'(.+?)\s+(/[^/]+/)', term)
+                if pron_match:
+                    term = pron_match.group(1).strip()
+                    pronunciation = pron_match.group(2)
+            
             continue
 
+        # Collect examples and additional info after main entry
         if term and line_stripped and not line_stripped.startswith("-----"):
-            examples.append(line.rstrip())
+            if line_stripped.startswith("Ex:") or line_stripped.startswith("Ex.") or line_stripped.startswith("Example:"):
+                examples.append(line.rstrip())
+            elif line_stripped.startswith("-") or line_stripped.startswith("•"):
+                additional_info.append(line.rstrip())
+            else:
+                # Other additional information
+                additional_info.append(line.rstrip())
 
     if collecting_etymology and etymology_lines:
         etymology = '\n'.join(etymology_lines).strip()
 
     if term and pos and definition:
-        return DictionaryEntry(term, pos, definition, etymology, examples, text)
+        return DictionaryEntry(term, pos, definition, etymology, examples, text, pronunciation, additional_info)
 
     return None
 
