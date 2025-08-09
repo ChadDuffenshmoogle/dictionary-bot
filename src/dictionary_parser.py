@@ -1,4 +1,4 @@
-# src/dictionary_parser.py (CORRECTED VERSION)
+# src/dictionary_parser.py (SAFE PRESERVING VERSION)
 import re
 from typing import List, Optional, Dict, Tuple
 from .config import logger, ENTRY_PATTERN
@@ -13,7 +13,7 @@ class DictionaryEntry:
     def __init__(self, term: str, pos: str, definition: str, etymology: Optional[str] = None, 
                  examples: Optional[List[str]] = None, raw_content: Optional[str] = None, 
                  pronunciation: Optional[str] = None, additional_info: Optional[List[str]] = None,
-                 derived_terms: Optional[str] = None):
+                 derived_terms: Optional[str] = None, preserve_original: bool = False):
         self.term = term
         self.pos = pos
         self.definition = definition
@@ -23,15 +23,20 @@ class DictionaryEntry:
         self.pronunciation = pronunciation
         self.additional_info = additional_info or []
         self.derived_terms = derived_terms
+        self.preserve_original = preserve_original  # Flag to preserve original formatting
 
     def to_string(self) -> str:
         """Converts the entry to its string format for file output."""
-        # Every entry gets wrapped in hyphens, following your format
+        # If we're preserving original formatting, return it as-is
+        if self.preserve_original and self.raw_content:
+            return self.raw_content.strip()
+        
+        # For new entries, use consistent formatting
         result = "---------------------------------------------\n"
         
         # Add etymology if present (before main entry)
         if self.etymology:
-            result += f"Etymology: {self.etymology}\n\n"
+            result += f"Etymology: {self.etymology}\n"
         
         # Build the main entry line
         main_line = f"{self.term}"
@@ -57,8 +62,8 @@ class DictionaryEntry:
         result += "\n---------------------------------------------"
         return result
 
-def extract_pronunciation_and_alts(text: str) -> Tuple[str, Optional[str]]:
-    """Extract pronunciation and alternative forms, return cleaned text + pronunciation."""
+def extract_pronunciation_from_term(text: str) -> Tuple[str, Optional[str]]:
+    """Extract pronunciation from term, return cleaned text + pronunciation."""
     pronunciation = None
     
     # Pattern 1: /phonetic/ notation
@@ -85,108 +90,8 @@ def extract_pronunciation_and_alts(text: str) -> Tuple[str, Optional[str]]:
     
     return text, pronunciation
 
-def parse_single_entry_line(line: str) -> Optional[DictionaryEntry]:
-    """Parse a single line that should contain one dictionary entry."""
-    line = line.strip()
-    if not line:
-        return None
-    
-    # Try the main pattern first
-    match = re.match(ENTRY_PATTERN, line)
-    if match:
-        raw_term, pos, definition = match.groups()
-        term, pronunciation = extract_pronunciation_and_alts(raw_term)
-        return DictionaryEntry(term, pos, definition, pronunciation=pronunciation, raw_content=line)
-    
-    # Try more flexible matching for entries with complex term formats
-    # Look for: anything (pos) - definition
-    flexible_pattern = r'^(.+?)\s*\(([^)]+)\)\s*-\s*(.+)$'
-    match = re.match(flexible_pattern, line)
-    if match:
-        raw_term, pos, definition = match.groups()
-        term, pronunciation = extract_pronunciation_and_alts(raw_term)
-        return DictionaryEntry(term, pos, definition, pronunciation=pronunciation, raw_content=line)
-    
-    return None
-
-def parse_complex_entry(text: str) -> Optional[DictionaryEntry]:
-    """Parse a complex entry that might span multiple lines."""
-    lines = [line.strip() for line in text.split('\n') if line.strip()]
-    if not lines:
-        return None
-    
-    # Remove hyphen separators
-    lines = [line for line in lines if not re.match(r'^-+$', line)]
-    
-    etymology = None
-    term = pos = definition = pronunciation = None
-    examples = []
-    additional_info = []
-    derived_terms = None
-    main_entry_found = False
-    
-    # Process lines to extract information
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        
-        # Etymology (comes first)
-        if line.startswith('Etymology:') and not main_entry_found:
-            etymology_parts = [line[10:].strip()]
-            i += 1
-            # Continue collecting etymology lines
-            while i < len(lines) and not re.match(ENTRY_PATTERN, lines[i]) and not lines[i].startswith(('Ex:', 'Derived Terms:')):
-                etymology_parts.append(lines[i])
-                i += 1
-            etymology = ' '.join(etymology_parts).strip()
-            continue
-        
-        # Try to find main entry line
-        entry = parse_single_entry_line(line)
-        if entry and not main_entry_found:
-            term = entry.term
-            pos = entry.pos
-            definition = entry.definition
-            pronunciation = entry.pronunciation
-            main_entry_found = True
-            i += 1
-            continue
-        
-        # Derived Terms
-        if line.startswith('Derived Terms:'):
-            derived_terms = line[14:].strip()
-            i += 1
-            continue
-        
-        # Examples
-        if line.startswith(('Ex:', 'Ex.', 'Example:')):
-            examples.append(line)
-            i += 1
-            continue
-        
-        # Additional info
-        if main_entry_found:
-            additional_info.append(line)
-        
-        i += 1
-    
-    if term and pos and definition:
-        return DictionaryEntry(
-            term=term,
-            pos=pos,
-            definition=definition,
-            etymology=etymology,
-            examples=examples,
-            pronunciation=pronunciation,
-            additional_info=additional_info,
-            derived_terms=derived_terms,
-            raw_content=text
-        )
-    
-    return None
-
 def parse_dictionary_entries(content: str) -> List[DictionaryEntry]:
-    """Parse dictionary content into DictionaryEntry objects."""
+    """Parse dictionary content preserving original formatting as much as possible."""
     entries = []
 
     if "-----DICTIONARY PROPER-----" not in content:
@@ -198,50 +103,169 @@ def parse_dictionary_entries(content: str) -> List[DictionaryEntry]:
 
     body = parts[1]
     
-    # Split into sections by double newlines
-    raw_sections = body.split('\n\n')
+    # Split by hyphen separators to find entry blocks
+    # Use regex to split while keeping the separators
+    sections = re.split(r'(\n?-{20,}\n?)', body)
     
-    i = 0
-    while i < len(raw_sections):
-        section = raw_sections[i].strip()
+    current_entry_content = ""
+    inside_entry = False
+    
+    for section in sections:
+        section_stripped = section.strip()
         
-        if not section:
-            i += 1
-            continue
-        
-        # Check if this section starts with hyphens (complex entry)
-        if section.strip().startswith('-----'):
-            # Collect the entire hyphen-wrapped entry
-            entry_parts = [section]
-            i += 1
-            
-            # Continue collecting until we find the closing hyphens or end
-            while i < len(raw_sections):
-                part = raw_sections[i].strip()
-                entry_parts.append(part)
-                
-                if part.endswith('-----'):
-                    break
-                i += 1
-            
-            # Parse this complex entry
-            full_entry_text = '\n\n'.join(entry_parts)
-            entry = parse_complex_entry(full_entry_text)
-            if entry:
-                entries.append(entry)
-        
-        else:
-            # This might be a simple entry or multiple simple entries
-            lines = [line.strip() for line in section.split('\n') if line.strip()]
-            
-            for line in lines:
-                entry = parse_single_entry_line(line)
+        # If this is a hyphen separator
+        if re.match(r'^-{20,}$', section_stripped):
+            if inside_entry and current_entry_content.strip():
+                # We've reached the end of an entry, process it
+                entry = create_entry_from_content(current_entry_content.strip())
                 if entry:
                     entries.append(entry)
-        
-        i += 1
+                current_entry_content = ""
+            inside_entry = not inside_entry
+        else:
+            # This is content (either entry content or whitespace between entries)
+            if inside_entry:
+                current_entry_content += section
+            else:
+                # Content outside entry blocks - might be simple entries
+                lines = [line.strip() for line in section.split('\n') if line.strip()]
+                for line in lines:
+                    if re.match(ENTRY_PATTERN, line):
+                        entry = parse_simple_line_entry(line)
+                        if entry:
+                            entries.append(entry)
+    
+    # Handle any remaining entry content
+    if inside_entry and current_entry_content.strip():
+        entry = create_entry_from_content(current_entry_content.strip())
+        if entry:
+            entries.append(entry)
     
     return entries
+
+def create_entry_from_content(content: str) -> Optional[DictionaryEntry]:
+    """Create a DictionaryEntry from content, preserving original formatting."""
+    lines = [line.rstrip() for line in content.split('\n')]  # Preserve internal structure but remove trailing spaces
+    
+    # Find the main entry line
+    main_entry_line = None
+    main_entry_match = None
+    term = pos = definition = None
+    
+    for line in lines:
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+            
+        # Skip obvious non-entry lines
+        if line_stripped.startswith(('Etymology:', 'Ex:', 'Example:', 'Derived Terms:')):
+            continue
+            
+        # Try to match entry pattern
+        match = re.match(ENTRY_PATTERN, line_stripped)
+        if match:
+            main_entry_line = line_stripped
+            main_entry_match = match
+            raw_term, pos, definition = match.groups()
+            term, pronunciation = extract_pronunciation_from_term(raw_term)
+            break
+    
+    if not main_entry_match:
+        # Try more flexible pattern matching
+        for line in lines:
+            line_stripped = line.strip()
+            if '(' in line_stripped and ')' in line_stripped and ' - ' in line_stripped:
+                # Try to extract components more flexibly
+                parts = line_stripped.split(' - ', 1)
+                if len(parts) == 2:
+                    left_part = parts[0].strip()
+                    definition = parts[1].strip()
+                    
+                    # Find the last parentheses (should be part of speech)
+                    paren_matches = list(re.finditer(r'\(([^)]+)\)', left_part))
+                    if paren_matches:
+                        last_paren = paren_matches[-1]
+                        pos = last_paren.group(1)
+                        term_part = left_part[:last_paren.start()].strip()
+                        term, pronunciation = extract_pronunciation_from_term(term_part)
+                        main_entry_line = line_stripped
+                        break
+    
+    if not term or not pos or not definition:
+        # If we can't parse it, still preserve it as raw content
+        if content.strip():
+            logger.warning(f"Could not parse entry content, preserving as-is: {content[:50]}...")
+            # Create a dummy entry that preserves the original formatting
+            return DictionaryEntry("UNPARSED", "n", "UNPARSED", raw_content=content, preserve_original=True)
+        return None
+    
+    # Extract additional information while preserving original formatting
+    etymology = None
+    examples = []
+    additional_info = []
+    derived_terms = None
+    
+    collecting_etymology = False
+    etymology_lines = []
+    
+    for line in lines:
+        line_stripped = line.strip()
+        
+        if line_stripped == main_entry_line:
+            continue
+            
+        if line_stripped.startswith('Etymology:'):
+            collecting_etymology = True
+            ety_content = line_stripped[10:].strip()
+            if ety_content:
+                etymology_lines.append(ety_content)
+            continue
+        
+        if collecting_etymology:
+            if line_stripped.startswith(('Ex:', 'Example:', 'Derived Terms:')) or re.match(ENTRY_PATTERN, line_stripped):
+                collecting_etymology = False
+                etymology = ' '.join(etymology_lines) if etymology_lines else None
+            else:
+                etymology_lines.append(line_stripped)
+                continue
+        
+        if line_stripped.startswith('Derived Terms:'):
+            derived_terms = line_stripped[14:].strip()
+            continue
+        
+        if line_stripped.startswith(('Ex:', 'Example:')):
+            examples.append(line.rstrip())  # Preserve original line formatting
+            continue
+        
+        # Everything else is additional info
+        if line_stripped and not collecting_etymology:
+            additional_info.append(line.rstrip())  # Preserve original line formatting
+    
+    # Finalize etymology if still collecting
+    if collecting_etymology and etymology_lines:
+        etymology = ' '.join(etymology_lines)
+    
+    return DictionaryEntry(
+        term=term.strip(),
+        pos=pos.strip(),
+        definition=definition.strip(),
+        etymology=etymology,
+        examples=examples,
+        pronunciation=pronunciation,
+        additional_info=additional_info,
+        derived_terms=derived_terms,
+        raw_content=content,
+        preserve_original=True  # Preserve original formatting for existing entries
+    )
+
+def parse_simple_line_entry(line: str) -> Optional[DictionaryEntry]:
+    """Parse a single-line entry."""
+    match = re.match(ENTRY_PATTERN, line.strip())
+    if match:
+        raw_term, pos, definition = match.groups()
+        term, pronunciation = extract_pronunciation_from_term(raw_term)
+        return DictionaryEntry(term, pos, definition, pronunciation=pronunciation, raw_content=line)
+    return None
 
 def get_corpus_from_content(content: str) -> List[str]:
     """Extract corpus terms from dictionary content."""
@@ -254,17 +278,23 @@ def get_corpus_from_content(content: str) -> List[str]:
 def count_dictionary_entries(content: str) -> int:
     """Count actual dictionary entries."""
     entries = parse_dictionary_entries(content)
-    return len(entries)
+    # Only count entries that aren't just preserved unparsed content
+    return len([e for e in entries if not (e.term == "UNPARSED" and e.preserve_original)])
 
-# Function to handle new entries from Discord messages
 def parse_message_as_entry(content: str) -> Optional[DictionaryEntry]:
     """Parse a Discord message that might contain a dictionary entry."""
     content = content.strip()
     
-    # First try as a simple single-line entry
-    entry = parse_single_entry_line(content)
+    # Try simple single-line parsing first
+    entry = parse_simple_line_entry(content)
     if entry:
+        entry.preserve_original = False  # New entries use standard formatting
         return entry
     
-    # Try as a complex multi-line entry
-    return parse_complex_entry(content)
+    # Try complex multi-line parsing
+    entry = create_entry_from_content(content)
+    if entry and entry.term != "UNPARSED":
+        entry.preserve_original = False  # New entries use standard formatting
+        return entry
+    
+    return None
