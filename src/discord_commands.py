@@ -166,7 +166,7 @@ class DictionaryCommands(commands.Cog):
         version_text = "\n".join(version_list)
 
         msg = f"""{version_text}
-Use `!getversion <vX.X.X>` to download any version."""
+Use `!getversion <X.X.X>` to show any version."""
 
         await ctx.send(msg)
 
