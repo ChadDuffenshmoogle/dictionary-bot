@@ -88,6 +88,7 @@ async def on_ready():
     if not welcome_sent:
         logger.warning("Could not find a channel to send a welcome message to.")
         await bot.change_presence(activity=discord.Game("⚠️ No channel access"))
+# Updated @bot.event on_message function for src/main.py
 
 @bot.event
 async def on_message(message):
@@ -107,8 +108,8 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
-    # Try to parse the entire message as a dictionary entry using the flexible parser
-    from .dictionary_parser import parse_flexible_entry
+    # Try to parse the entire message as a dictionary entry using the new parser
+    from .dictionary_parser import parse_message_as_entry
     
     # First, try to detect if this looks like a dictionary entry at all
     has_definition_format = False
@@ -132,7 +133,7 @@ async def on_message(message):
         logger.info("Message appears to contain dictionary entry format")
         
         # Try to parse the entry
-        parsed_entry = parse_flexible_entry(content)
+        parsed_entry = parse_message_as_entry(content)
         
         if parsed_entry:
             logger.info(f"Successfully parsed entry: {parsed_entry.term} ({parsed_entry.pos})")

@@ -1,7 +1,7 @@
-# src/dictionary_parser.py (IMPROVED VERSION)
+# src/dictionary_parser.py (CORRECTED VERSION)
 import re
 from typing import List, Optional, Dict, Tuple
-from .config import logger
+from .config import logger, ENTRY_PATTERN
 
 def sort_key_ignore_punct(s: str) -> str:
     """Strips leading punctuation, returns lowercase remaining string for sorting."""
@@ -26,61 +26,42 @@ class DictionaryEntry:
 
     def to_string(self) -> str:
         """Converts the entry to its string format for file output."""
-        # If this is a simple entry with no additional details, keep it on one line
-        if (not self.etymology and not self.examples and not self.pronunciation and 
-            not self.additional_info and not self.derived_terms and self.raw_content and 
-            '\n' not in self.raw_content.strip()):
-            return self.raw_content.strip()
+        # Every entry gets wrapped in hyphens, following your format
+        result = "---------------------------------------------\n"
+        
+        # Add etymology if present (before main entry)
+        if self.etymology:
+            result += f"Etymology: {self.etymology}\n\n"
+        
+        # Build the main entry line
+        main_line = f"{self.term}"
+        if self.pronunciation:
+            main_line += f" {self.pronunciation}"
+        main_line += f" ({self.pos}) - {self.definition}"
+        result += main_line
+        
+        # Add derived terms if present
+        if self.derived_terms:
+            result += f"\nDerived Terms: {self.derived_terms}"
+        
+        # Add additional info if present
+        if self.additional_info:
+            for info in self.additional_info:
+                result += f"\n{info}"
+        
+        # Add examples if present
+        if self.examples:
+            for example in self.examples:
+                result += f"\n{example}"
+        
+        result += "\n---------------------------------------------"
+        return result
 
-        # Check if this entry needs the hyphen format (has additional details)
-        needs_hyphens = (self.etymology or self.examples or self.pronunciation or 
-                        self.additional_info or self.derived_terms or 
-                        (self.raw_content and '\n' in self.raw_content))
-
-        if needs_hyphens:
-            result = "---------------------------------------------\n"
-            
-            # Add etymology if present
-            if self.etymology:
-                result += f"Etymology: {self.etymology}\n\n"
-            
-            # Main entry line with pronunciation if present
-            main_line = f"{self.term}"
-            if self.pronunciation:
-                main_line += f" {self.pronunciation}"
-            main_line += f" ({self.pos}) - {self.definition}"
-            result += main_line
-            
-            # Add derived terms if present
-            if self.derived_terms:
-                result += f"\nDerived Terms: {self.derived_terms}"
-            
-            # Add additional info if present
-            if self.additional_info:
-                for info in self.additional_info:
-                    result += f"\n{info}"
-            
-            # Add examples if present
-            if self.examples:
-                for example in self.examples:
-                    result += f"\n{example}"
-            
-            result += "\n---------------------------------------------"
-            return result
-        else:
-            # Simple one-line entry
-            main_line = f"{self.term}"
-            if self.pronunciation:
-                main_line += f" {self.pronunciation}"
-            main_line += f" ({self.pos}) - {self.definition}"
-            return main_line
-
-def extract_pronunciation(text: str) -> Tuple[str, Optional[str]]:
-    """Extract pronunciation from various formats and return cleaned text + pronunciation."""
-    original_text = text
+def extract_pronunciation_and_alts(text: str) -> Tuple[str, Optional[str]]:
+    """Extract pronunciation and alternative forms, return cleaned text + pronunciation."""
     pronunciation = None
     
-    # Pattern 1: /phonetic/ anywhere in the text
+    # Pattern 1: /phonetic/ notation
     phonetic_match = re.search(r'/[^/]+/', text)
     if phonetic_match:
         pronunciation = phonetic_match.group(0)
@@ -89,7 +70,7 @@ def extract_pronunciation(text: str) -> Tuple[str, Optional[str]]:
     # Pattern 2: (pronounced: something)
     pron_match = re.search(r'\(pronounced:\s*([^)]+)\)', text, re.IGNORECASE)
     if pron_match:
-        if not pronunciation:  # Don't override if we already found phonetic
+        if not pronunciation:
             pronunciation = f"/{pron_match.group(1)}/"
         text = re.sub(r'\(pronounced:\s*[^)]+\)', '', text, flags=re.IGNORECASE).strip()
     
@@ -99,141 +80,115 @@ def extract_pronunciation(text: str) -> Tuple[str, Optional[str]]:
         pronunciation = bracket_match.group(0)
         text = text.replace(pronunciation, '').strip()
     
-    # Clean up any double spaces
+    # Clean up multiple spaces
     text = re.sub(r'\s+', ' ', text).strip()
     
     return text, pronunciation
 
-def parse_flexible_entry(content: str) -> Optional[DictionaryEntry]:
-    """Parse a dictionary entry with flexible formatting."""
-    lines = [line.strip() for line in content.split('\n') if line.strip()]
+def parse_single_entry_line(line: str) -> Optional[DictionaryEntry]:
+    """Parse a single line that should contain one dictionary entry."""
+    line = line.strip()
+    if not line:
+        return None
+    
+    # Try the main pattern first
+    match = re.match(ENTRY_PATTERN, line)
+    if match:
+        raw_term, pos, definition = match.groups()
+        term, pronunciation = extract_pronunciation_and_alts(raw_term)
+        return DictionaryEntry(term, pos, definition, pronunciation=pronunciation, raw_content=line)
+    
+    # Try more flexible matching for entries with complex term formats
+    # Look for: anything (pos) - definition
+    flexible_pattern = r'^(.+?)\s*\(([^)]+)\)\s*-\s*(.+)$'
+    match = re.match(flexible_pattern, line)
+    if match:
+        raw_term, pos, definition = match.groups()
+        term, pronunciation = extract_pronunciation_and_alts(raw_term)
+        return DictionaryEntry(term, pos, definition, pronunciation=pronunciation, raw_content=line)
+    
+    return None
+
+def parse_complex_entry(text: str) -> Optional[DictionaryEntry]:
+    """Parse a complex entry that might span multiple lines."""
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
     if not lines:
         return None
     
-    # Find the main definition line - look for pattern: word (pos) - definition
-    main_pattern = r'^(.+?)\s*\(([^)]+)\)\s*-\s*(.+)$'
-    main_line = None
-    main_match = None
-    term = pos = definition = None
-    pronunciation = None
+    # Remove hyphen separators
+    lines = [line for line in lines if not re.match(r'^-+$', line)]
+    
     etymology = None
+    term = pos = definition = pronunciation = None
     examples = []
     additional_info = []
     derived_terms = None
+    main_entry_found = False
     
-    # First pass: find the main entry line
-    for i, line in enumerate(lines):
-        # Skip lines that are clearly not main entries
-        if (line.startswith('Etymology:') or line.startswith('Ex:') or 
-            line.startswith('Example:') or line.startswith('Derived Terms:') or
-            line.startswith('-') or line.startswith('•')):
-            continue
-            
-        # Try to match the main pattern
-        match = re.match(main_pattern, line)
-        if match:
-            main_line = line
-            main_match = match
-            raw_term, pos, definition = match.groups()
-            
-            # Extract pronunciation from the term
-            term, pronunciation = extract_pronunciation(raw_term)
-            break
-    
-    if not main_match:
-        # If no clear main line found, try to parse the first line that looks like an entry
-        for line in lines:
-            # More flexible matching - look for any line with parentheses and a dash
-            if '(' in line and ')' in line and ' - ' in line:
-                # Try to extract components more flexibly
-                parts = line.split(' - ', 1)
-                if len(parts) == 2:
-                    left_part = parts[0].strip()
-                    definition = parts[1].strip()
-                    
-                    # Extract part of speech from parentheses
-                    paren_match = re.search(r'\(([^)]+)\)(?!.*\([^)]*\))', left_part)
-                    if paren_match:
-                        pos = paren_match.group(1)
-                        # Everything before the last parentheses is the term
-                        term_part = left_part[:paren_match.start()].strip()
-                        term, pronunciation = extract_pronunciation(term_part)
-                        main_line = line
-                        break
-    
-    if not term or not pos or not definition:
-        return None
-    
-    # Second pass: collect additional information
-    collecting_etymology = False
-    etymology_lines = []
-    
-    for line in lines:
-        if line == main_line:
-            continue
-            
-        # Etymology
-        if line.startswith('Etymology:'):
-            collecting_etymology = True
-            ety_content = line[10:].strip()
-            if ety_content:
-                etymology_lines.append(ety_content)
+    # Process lines to extract information
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        
+        # Etymology (comes first)
+        if line.startswith('Etymology:') and not main_entry_found:
+            etymology_parts = [line[10:].strip()]
+            i += 1
+            # Continue collecting etymology lines
+            while i < len(lines) and not re.match(ENTRY_PATTERN, lines[i]) and not lines[i].startswith(('Ex:', 'Derived Terms:')):
+                etymology_parts.append(lines[i])
+                i += 1
+            etymology = ' '.join(etymology_parts).strip()
             continue
         
-        if collecting_etymology:
-            # Continue collecting etymology until we hit something else
-            if (line.startswith('Ex:') or line.startswith('Example:') or 
-                line.startswith('Derived Terms:') or re.match(main_pattern, line)):
-                collecting_etymology = False
-                etymology = ' '.join(etymology_lines) if etymology_lines else None
-            else:
-                etymology_lines.append(line)
-                continue
+        # Try to find main entry line
+        entry = parse_single_entry_line(line)
+        if entry and not main_entry_found:
+            term = entry.term
+            pos = entry.pos
+            definition = entry.definition
+            pronunciation = entry.pronunciation
+            main_entry_found = True
+            i += 1
+            continue
         
         # Derived Terms
         if line.startswith('Derived Terms:'):
             derived_terms = line[14:].strip()
+            i += 1
             continue
         
         # Examples
-        if line.startswith('Ex:') or line.startswith('Example:'):
+        if line.startswith(('Ex:', 'Ex.', 'Example:')):
             examples.append(line)
+            i += 1
             continue
         
-        # Additional structured info
-        if line.startswith('-') or line.startswith('•'):
+        # Additional info
+        if main_entry_found:
             additional_info.append(line)
-            continue
         
-        # If we're not in etymology mode and this isn't a main line, it's additional info
-        if not collecting_etymology:
-            # Check if this might be a continuation of examples or additional info
-            if examples and not line.startswith(('Etymology:', 'Derived Terms:')):
-                # Might be example continuation
-                examples.append(line)
-            else:
-                additional_info.append(line)
+        i += 1
     
-    # Finalize etymology if we were still collecting
-    if collecting_etymology and etymology_lines:
-        etymology = ' '.join(etymology_lines)
+    if term and pos and definition:
+        return DictionaryEntry(
+            term=term,
+            pos=pos,
+            definition=definition,
+            etymology=etymology,
+            examples=examples,
+            pronunciation=pronunciation,
+            additional_info=additional_info,
+            derived_terms=derived_terms,
+            raw_content=text
+        )
     
-    return DictionaryEntry(
-        term=term.strip(),
-        pos=pos.strip(), 
-        definition=definition.strip(),
-        etymology=etymology,
-        examples=examples,
-        pronunciation=pronunciation,
-        additional_info=additional_info,
-        derived_terms=derived_terms,
-        raw_content=content
-    )
+    return None
 
 def parse_dictionary_entries(content: str) -> List[DictionaryEntry]:
-    """Parse dictionary content with flexible entry detection."""
+    """Parse dictionary content into DictionaryEntry objects."""
     entries = []
-    
+
     if "-----DICTIONARY PROPER-----" not in content:
         return entries
 
@@ -243,50 +198,50 @@ def parse_dictionary_entries(content: str) -> List[DictionaryEntry]:
 
     body = parts[1]
     
-    # Split content into potential entry blocks
-    # First, handle hyphen-separated complex entries
-    sections = re.split(r'\n\n(?=---------------------------------------------)', body)
-    remaining_content = []
+    # Split into sections by double newlines
+    raw_sections = body.split('\n\n')
     
-    for section in sections:
-        if '---------------------------------------------' in section:
-            # This is a complex entry
-            entry = parse_complex_entry_flexible(section)
+    i = 0
+    while i < len(raw_sections):
+        section = raw_sections[i].strip()
+        
+        if not section:
+            i += 1
+            continue
+        
+        # Check if this section starts with hyphens (complex entry)
+        if section.strip().startswith('-----'):
+            # Collect the entire hyphen-wrapped entry
+            entry_parts = [section]
+            i += 1
+            
+            # Continue collecting until we find the closing hyphens or end
+            while i < len(raw_sections):
+                part = raw_sections[i].strip()
+                entry_parts.append(part)
+                
+                if part.endswith('-----'):
+                    break
+                i += 1
+            
+            # Parse this complex entry
+            full_entry_text = '\n\n'.join(entry_parts)
+            entry = parse_complex_entry(full_entry_text)
             if entry:
                 entries.append(entry)
-        else:
-            remaining_content.append(section)
-    
-    # Now handle the remaining content as simple entries
-    remaining_text = '\n\n'.join(remaining_content)
-    simple_sections = [s.strip() for s in remaining_text.split('\n\n') if s.strip()]
-    
-    for section in simple_sections:
-        # Try to parse as a single entry or multiple single-line entries
-        lines = [line.strip() for line in section.split('\n') if line.strip()]
         
-        # Check if this whole section is one entry
-        entry = parse_flexible_entry(section)
-        if entry:
-            entries.append(entry)
         else:
-            # Try parsing individual lines
+            # This might be a simple entry or multiple simple entries
+            lines = [line.strip() for line in section.split('\n') if line.strip()]
+            
             for line in lines:
-                if line.strip():
-                    line_entry = parse_flexible_entry(line)
-                    if line_entry:
-                        entries.append(line_entry)
+                entry = parse_single_entry_line(line)
+                if entry:
+                    entries.append(entry)
+        
+        i += 1
     
     return entries
-
-def parse_complex_entry_flexible(text: str) -> Optional[DictionaryEntry]:
-    """Parse complex entries with hyphen separators more flexibly."""
-    # Remove the hyphen separators for easier parsing
-    clean_text = re.sub(r'^-+\n?', '', text, flags=re.MULTILINE)
-    clean_text = re.sub(r'\n?-+$', '', clean_text, flags=re.MULTILINE)
-    clean_text = clean_text.strip()
-    
-    return parse_flexible_entry(clean_text)
 
 def get_corpus_from_content(content: str) -> List[str]:
     """Extract corpus terms from dictionary content."""
@@ -301,33 +256,15 @@ def count_dictionary_entries(content: str) -> int:
     entries = parse_dictionary_entries(content)
     return len(entries)
 
-# Test function to validate parsing
-def test_parsing_examples():
-    """Test the parser with your examples."""
-    test_cases = [
-        'testword (n.) - A word or phrase used as a deliberate, complex example to verify the functionality of an automated system.',
-        'testword (n.) - /ˈtɛstˌwɜːrd/ A word or phrase used as a deliberate, complex example',
-        'aaa (pronounced: ayy) (n.) - aaa',
-        'aaa (n.) (pronounced: ayy) - aaa',
-        'aaa (n.) - (pronounced: ayy) aaa',
-        'aaa (n.) - /ayy/ aaa',
-        '''testword (n.) - A word or phrase used as a deliberate, complex example to verify the functionality of an automated system. 
-Etymology: A neologism created for the purpose of demonstrating advanced bot parsing
-Ex: "The developer used 'testword' to ensure the dictionary bot could handle multi-line entries"'''
-    ]
+# Function to handle new entries from Discord messages
+def parse_message_as_entry(content: str) -> Optional[DictionaryEntry]:
+    """Parse a Discord message that might contain a dictionary entry."""
+    content = content.strip()
     
-    for i, test_case in enumerate(test_cases):
-        print(f"\nTest case {i+1}:")
-        print(f"Input: {repr(test_case)}")
-        entry = parse_flexible_entry(test_case)
-        if entry:
-            print(f"Parsed: term='{entry.term}', pos='{entry.pos}', def='{entry.definition[:50]}...'")
-            if entry.pronunciation:
-                print(f"Pronunciation: {entry.pronunciation}")
-            if entry.etymology:
-                print(f"Etymology: {entry.etymology}")
-        else:
-            print("Failed to parse")
-
-if __name__ == "__main__":
-    test_parsing_examples()
+    # First try as a simple single-line entry
+    entry = parse_single_entry_line(content)
+    if entry:
+        return entry
+    
+    # Try as a complex multi-line entry
+    return parse_complex_entry(content)
