@@ -196,37 +196,50 @@ class DictionaryManager:
         # Replace the first line with new version and timestamp
         header_lines[0] = f"{FILE_PREFIX} {new_version} - {timestamp}"
         
-        # Update corpus - find and replace the corpus section
-        corpus_line_index = None
+        # Find the corpus section and update it
+        corpus_start = None
+        corpus_end = None
+        
         for i, line in enumerate(header_lines):
             if line.strip().startswith("Corpus:"):
-                corpus_line_index = i
+                corpus_start = i
                 break
         
-        if corpus_line_index is not None:
-            # Format corpus with the same grouping style as shown
-            formatted_corpus = self._format_corpus_with_grouping(new_corpus)
-            
-            # Replace the corpus section (might span multiple lines)
-            # Find the end of corpus section (look for next section or empty line)
-            corpus_end = corpus_line_index + 1
+        if corpus_start is not None:
+            # Find the end of the corpus section (look for empty line or start of next section)
+            corpus_end = corpus_start + 1
             while corpus_end < len(header_lines):
                 line = header_lines[corpus_end].strip()
                 if line == "" or line.startswith("-----"):
                     break
+                # Check if this looks like the start of a new section
+                if line and not any(char in line for char in [',', ':', 'T:', 'S:', 'P:', 'C:']):
+                    break
                 corpus_end += 1
             
+            # Format the new corpus
+            formatted_corpus = self._format_corpus_with_grouping(new_corpus)
+            logger.info(f"Formatted corpus preview: {formatted_corpus[:200]}...")
+            
             # Replace the corpus section
-            new_corpus_lines = [f"Corpus: {formatted_corpus}"]
-            header_lines = header_lines[:corpus_line_index] + new_corpus_lines + header_lines[corpus_end:]
+            new_corpus_text = f"Corpus: {formatted_corpus.strip()}"
+            
+            # Split into lines if it's very long
+            corpus_lines = [new_corpus_text]
+            
+            # Replace the old corpus section with the new one
+            header_lines = header_lines[:corpus_start] + corpus_lines + header_lines[corpus_end:]
+        else:
+            logger.warning("Could not find corpus section in header")
         
         return '\n'.join(header_lines)
 
     def _format_corpus_with_grouping(self, corpus: List[str]) -> str:
-        """Format corpus with letter grouping like the original."""
+        """Format corpus with each letter getting its own line."""
         if not corpus:
             return ""
         
+        # Group by first letter
         grouped = {}
         for term in corpus:
             first_letter = term[0].upper()
@@ -234,36 +247,55 @@ class DictionaryManager:
                 grouped[first_letter] = []
             grouped[first_letter].append(term)
         
+        # Sort terms within each group
+        for letter in grouped:
+            grouped[letter] = sorted(grouped[letter], key=sort_key_ignore_punct)
+        
         result_parts = []
-        for letter in sorted(grouped.keys()):
-            terms = sorted(grouped[letter], key=sort_key_ignore_punct)
-            if letter in ['C', 'P', 'Q', 'S', 'T']:  # Letters that get their own line
-                result_parts.append(f"\n\n{letter}: {', '.join(terms)}")
+        letters = sorted(grouped.keys())
+        
+        for i, letter in enumerate(letters):
+            terms = grouped[letter]
+            
+            # Each letter gets its own line with letter prefix
+            if i == 0:
+                # First letter doesn't need extra newlines at start
+                result_parts.append(f"{letter}: {', '.join(terms)}")
             else:
-                if result_parts and not result_parts[-1].startswith('\n\n'):
-                    result_parts.append(', '.join(terms))
-                else:
-                    if result_parts:
-                        result_parts.append(', '.join(terms))
-                    else:
-                        result_parts.append(', '.join(terms))
+                # All other letters get double newline before them
+                result_parts.append(f"\n\n{letter}: {', '.join(terms)}")
         
         return ''.join(result_parts)
 
     def _insert_entry_in_body(self, body_part: str, new_term: str, new_entry_text: str) -> str:
         """Insert the new entry in alphabetical order in the body."""
         new_sort_key = sort_key_ignore_punct(new_term)
+        logger.info(f"Inserting '{new_term}' with sort key: '{new_sort_key}'")
         
         # Split body into lines and find insertion point
         lines = body_part.split('\n')
         insertion_line = len(lines)  # Default to end
         
         i = 0
+        in_complex_entry = False
+        
         while i < len(lines):
             line = lines[i].strip()
             
-            # Skip empty lines and separator lines
-            if not line or line.startswith('-'):
+            # Track if we're inside a complex entry block
+            if line.startswith('-----'):
+                in_complex_entry = not in_complex_entry
+                i += 1
+                continue
+            
+            # Skip empty lines
+            if not line:
+                i += 1
+                continue
+            
+            # Skip etymology and other metadata lines within complex entries
+            if in_complex_entry and (line.startswith('Etymology:') or line.startswith('Ex:') or 
+                                   line.startswith('Example:') or line.startswith('Derived Terms:')):
                 i += 1
                 continue
             
@@ -271,39 +303,48 @@ class DictionaryManager:
             term = self._extract_term_from_line(line)
             if term:
                 term_sort_key = sort_key_ignore_punct(term)
+                logger.info(f"Comparing '{new_term}' ({new_sort_key}) with '{term}' ({term_sort_key})")
+                
                 if new_sort_key < term_sort_key:
+                    # Insert before this entry
                     insertion_line = i
+                    
+                    # If this is part of a complex entry, go back to the start of it
+                    if in_complex_entry:
+                        # Find the previous separator line
+                        j = i - 1
+                        while j >= 0 and not lines[j].strip().startswith('-----'):
+                            j -= 1
+                        if j >= 0:
+                            insertion_line = j
+                    
+                    logger.info(f"Found insertion point at line {insertion_line}")
                     break
-            
-            # If this is a complex entry (starts etymology), skip the whole block
-            if line.startswith('Etymology:'):
-                # Skip until we find the closing separator or next entry
-                i += 1
-                while i < len(lines) and not lines[i].strip().startswith('-----'):
-                    i += 1
-                if i < len(lines):
-                    i += 1  # Skip the closing separator
-                continue
             
             i += 1
         
         # Insert the new entry
         if insertion_line < len(lines):
-            # Insert before this line, add appropriate spacing
+            # Add spacing before if needed
             if insertion_line > 0 and lines[insertion_line - 1].strip() != "":
                 lines.insert(insertion_line, "")
                 insertion_line += 1
             
-            lines.insert(insertion_line, new_entry_text)
+            # Insert the new entry
+            entry_lines = new_entry_text.split('\n')
+            for j, entry_line in enumerate(entry_lines):
+                lines.insert(insertion_line + j, entry_line)
             
             # Add spacing after if needed
-            if insertion_line + 1 < len(lines) and lines[insertion_line + 1].strip() != "":
-                lines.insert(insertion_line + 1, "")
+            next_line_index = insertion_line + len(entry_lines)
+            if next_line_index < len(lines) and lines[next_line_index].strip() != "":
+                lines.insert(next_line_index, "")
         else:
             # Add at the end
             if lines and lines[-1].strip() != "":
                 lines.append("")
-            lines.append(new_entry_text)
+            entry_lines = new_entry_text.split('\n')
+            lines.extend(entry_lines)
             lines.append("")
         
         return '\n'.join(lines)
