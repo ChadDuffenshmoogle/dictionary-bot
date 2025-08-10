@@ -99,6 +99,27 @@ class DictionaryManager:
         # Add to corpus and sort
         new_corpus = corpus + [term]
         new_corpus = sorted(set(new_corpus), key=sort_key_ignore_punct)
+        
+        logger.info(f"Original corpus count: {len(corpus)}")
+        logger.info(f"New corpus count: {len(new_corpus)}")
+        logger.info(f"Added term '{term}' to corpus")
+        
+        # Debug: show where the term should be in the sorted list
+        term_position = None
+        for i, corpus_term in enumerate(new_corpus):
+            if corpus_term.lower() == term.lower():
+                term_position = i
+                break
+        
+        if term_position is not None:
+            logger.info(f"Term '{term}' is at position {term_position} in sorted corpus")
+            # Show surrounding terms for context
+            start = max(0, term_position - 3)
+            end = min(len(new_corpus), term_position + 4)
+            context = new_corpus[start:end]
+            logger.info(f"Context: {context}")
+        else:
+            logger.warning(f"Term '{term}' not found in new corpus!")
 
         # Create new entry with appropriate formatting
         new_entry_text = self._format_new_entry(term, pos, definition, pronunciation, ety_lines, example_lines, additional_info)
@@ -351,8 +372,11 @@ class DictionaryManager:
 
     def _extract_term_from_line(self, line: str) -> Optional[str]:
         """Extract the main term from a line for sorting purposes."""
-        # Try standard pattern first
-        match = re.match(ENTRY_PATTERN, line.strip())
+        # Handle complex entries that might start with just the term
+        line = line.strip()
+        
+        # Try standard pattern first: term (pos) - definition
+        match = re.match(ENTRY_PATTERN, line)
         if match:
             raw_term = match.group(1)
             # Remove pronunciation markers to get clean term
@@ -361,7 +385,7 @@ class DictionaryManager:
             term = re.sub(r'\[[^\]]+\]', '', term)
             return term.strip()
         
-        # Try to extract from complex entries
+        # Try to handle lines that just have the term followed by (pos) - definition
         if '(' in line and ')' in line and ' - ' in line:
             parts = line.split(' - ', 1)
             if len(parts) == 2:
@@ -376,5 +400,16 @@ class DictionaryManager:
                     term = re.sub(r'\(pronounced:\s*[^)]+\)', '', term, flags=re.IGNORECASE)
                     term = re.sub(r'\[[^\]]+\]', '', term)
                     return term.strip()
+        
+        # Try to extract term from lines that might not follow exact pattern
+        # Look for pattern: word (anything) - anything
+        simple_match = re.match(r'^([^(]+?)\s*\([^)]+\)\s*-', line)
+        if simple_match:
+            term = simple_match.group(1).strip()
+            # Clean pronunciation markers
+            term = re.sub(r'/[^/]+/', '', term)
+            term = re.sub(r'\(pronounced:\s*[^)]+\)', '', term, flags=re.IGNORECASE)
+            term = re.sub(r'\[[^\]]+\]', '', term)
+            return term.strip()
         
         return None
