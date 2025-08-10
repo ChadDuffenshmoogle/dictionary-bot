@@ -56,11 +56,59 @@ class DictionaryManager:
         return []
 
     def get_all_corpus(self, version: str) -> List[str]:
-        """Gets all corpus terms for a given version."""
+        """Gets all corpus terms for a given version - FIXED VERSION."""
         content = self.get_dictionary_content(version)
         if content:
-            return get_corpus_from_content(content)
+            return self._extract_corpus_terms_from_content(content)
         return []
+
+    def _extract_corpus_terms_from_content(self, content: str) -> List[str]:
+        """Extract all corpus terms from the actual file format."""
+        # Find the corpus section between -----CORPUS----- and -----DICTIONARY PROPER-----
+        corpus_match = re.search(r"-----CORPUS-----\s*\n(.*?)\n-----DICTIONARY PROPER-----", content, re.DOTALL)
+        if not corpus_match:
+            logger.warning("Could not find corpus section in content")
+            return []
+        
+        corpus_text = corpus_match.group(1).strip()
+        
+        # Extract all terms by splitting on commas and cleaning up
+        # This handles the mixed format with letter labels and continuous text
+        all_terms = []
+        
+        # Split by commas first
+        raw_parts = corpus_text.split(',')
+        
+        for part in raw_parts:
+            part = part.strip()
+            if not part:
+                continue
+                
+            # Skip parts that are just letter labels (like "C:")
+            if re.match(r'^[A-Z]:$', part):
+                continue
+                
+            # Handle parts that start with letter labels (like "C: caboosification")
+            if re.match(r'^[A-Z]:\s+', part):
+                # Remove the letter label and keep the term
+                term = re.sub(r'^[A-Z]:\s+', '', part).strip()
+                if term:
+                    all_terms.append(term)
+            else:
+                # Regular term
+                if part:
+                    all_terms.append(part)
+        
+        # Clean up terms and remove any remaining artifacts
+        cleaned_terms = []
+        for term in all_terms:
+            term = term.strip()
+            # Skip empty terms or letter-only labels
+            if term and not re.match(r'^[A-Z]$', term) and not re.match(r'^[A-Z]:$', term):
+                cleaned_terms.append(term)
+        
+        logger.info(f"Extracted {len(cleaned_terms)} corpus terms from content")
+        return cleaned_terms
 
     def add_entry(self, term: str, pos: str, definition: str, ety_lines: Optional[List[str]] = None, 
                   example_lines: Optional[List[str]] = None, pronunciation: Optional[str] = None, 
@@ -96,7 +144,7 @@ class DictionaryManager:
         else:
             new_version = "v1.2.5"  # Fallback
 
-        # Add to corpus and sort
+        # Add to corpus and sort - this is crucial for proper ordering
         new_corpus = corpus + [term]
         new_corpus = sorted(set(new_corpus), key=sort_key_ignore_punct)
         
@@ -227,17 +275,22 @@ class DictionaryManager:
                 break
         
         if corpus_start is not None:
-            # Find end of corpus (where we hit a line starting with -----)
+            # Find end of corpus (empty line before -----DICTIONARY PROPER-----)
             corpus_end = corpus_start
             while corpus_end < len(lines):
-                if lines[corpus_end].strip().startswith("-----") and "CORPUS" not in lines[corpus_end]:
-                    break
+                if lines[corpus_end].strip() == "":
+                    # Check if next non-empty line is -----DICTIONARY PROPER-----
+                    next_idx = corpus_end + 1
+                    while next_idx < len(lines) and lines[next_idx].strip() == "":
+                        next_idx += 1
+                    if next_idx < len(lines) and "-----DICTIONARY PROPER-----" in lines[next_idx]:
+                        break
                 corpus_end += 1
             
-            # Generate new corpus content
+            # Generate new corpus content in the original mixed format
             formatted_corpus = self._format_corpus_for_file(new_corpus)
             
-            # Replace corpus section
+            # Replace corpus section, preserving the empty line before -----DICTIONARY PROPER-----
             new_lines = lines[:corpus_start] + [formatted_corpus, ""] + lines[corpus_end:]
             return '\n'.join(new_lines)
         else:
@@ -245,7 +298,7 @@ class DictionaryManager:
             return '\n'.join(lines)
 
     def _format_corpus_for_file(self, corpus: List[str]) -> str:
-        """Format corpus with one line per letter A: through Z: with no blank lines between."""
+        """Format corpus to match the original mixed format with letter groupings."""
         if not corpus:
             return ""
         
@@ -262,18 +315,23 @@ class DictionaryManager:
         for letter in grouped:
             grouped[letter] = sorted(grouped[letter], key=sort_key_ignore_punct)
         
-        # Build corpus with each letter on its own line
-        result_lines = []
+        # Build corpus text in the mixed format like the original
+        result_parts = []
+        letters = sorted(grouped.keys())
         
-        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-            if letter in grouped and grouped[letter]:
-                terms = grouped[letter]
-                line = f"{letter}: {', '.join(terms)}"
-                result_lines.append(line)
-            # Skip empty letters - only include letters that have terms
+        for i, letter in enumerate(letters):
+            terms = grouped[letter]
+            
+            if i == 0:
+                # First group - no letter label, just terms with commas
+                result_parts.append(', '.join(terms))
+            elif letter in ['C', 'P', 'S', 'T']:  # Letters that had explicit labels in original
+                result_parts.append(f"\n\n{letter}: {', '.join(terms)}")
+            else:
+                # Other letters continue on same line with commas
+                result_parts.append(f", {', '.join(terms)}")
         
-        # Join with newlines (each letter gets its own line, no blank lines)
-        return "\n".join(result_lines)
+        return ''.join(result_parts)
 
     def _insert_entry_in_body(self, body_part: str, new_term: str, new_entry_text: str) -> str:
         """Insert the new entry in alphabetical order in the dictionary body."""
@@ -291,7 +349,7 @@ class DictionaryManager:
             line = lines[i].strip()
             
             # Track complex entry boundaries (dashed lines)
-            if line.startswith('-----'):
+            if line.startswith('-----') and len(line) > 10:
                 if not in_complex_entry:
                     # Starting a complex entry
                     in_complex_entry = True
@@ -309,8 +367,7 @@ class DictionaryManager:
                 continue
             
             # Skip metadata lines within complex entries
-            if in_complex_entry and (line.startswith('Etymology:') or line.startswith(('Ex:', 'Example:', '- Example:')) or 
-                                   line.startswith('Derived Terms:') or line.startswith('- ')):
+            if in_complex_entry and (line.startswith(('Etymology:', 'Ex:', 'Example:', '- Example:', 'Derived Terms:', '- '))):
                 i += 1
                 continue
             
