@@ -310,6 +310,7 @@ class DictionaryManager:
                 result_parts.append(f"\n{letter}: {', '.join(terms)}")
         
         return ''.join(result_parts)
+
     def _insert_entry_in_body(self, body_part: str, new_term: str, new_entry_text: str) -> str:
         """Insert the new entry in alphabetical order in the dictionary body."""
         new_sort_key = sort_key_ignore_punct(new_term)
@@ -352,39 +353,39 @@ class DictionaryManager:
                     entry_positions.append((sort_key_ignore_punct(term), i, term))
             
             i += 1
-    
-    # Find insertion point
-    for sort_key, line_num, term in entry_positions:
-        if new_sort_key < sort_key:
-            insertion_point = line_num
-            logger.info(f"Found insertion point at line {line_num} (before '{term}')")
-            break
-    
-    # Insert the new entry
-    if insertion_point is not None:
-        # Add spacing before if needed
-        if insertion_point > 0 and lines[insertion_point - 1].strip() != "":
-            lines.insert(insertion_point, "")
-            insertion_point += 1
+        
+        # Find insertion point
+        for sort_key, line_num, term in entry_positions:
+            if new_sort_key < sort_key:
+                insertion_point = line_num
+                logger.info(f"Found insertion point at line {line_num} (before '{term}')")
+                break
         
         # Insert the new entry
-        entry_lines = new_entry_text.split('\n')
-        for j, entry_line in enumerate(entry_lines):
-            lines.insert(insertion_point + j, entry_line)
-        
-        # Add spacing after
-        next_line_index = insertion_point + len(entry_lines)
-        if next_line_index < len(lines) and lines[next_line_index].strip() != "":
-            lines.insert(next_line_index, "")
-    else:
-        # Add at the end
-        if lines and lines[-1].strip() != "":
+        if insertion_point is not None:
+            # Add spacing before if needed
+            if insertion_point > 0 and lines[insertion_point - 1].strip() != "":
+                lines.insert(insertion_point, "")
+                insertion_point += 1
+            
+            # Insert the new entry
+            entry_lines = new_entry_text.split('\n')
+            for j, entry_line in enumerate(entry_lines):
+                lines.insert(insertion_point + j, entry_line)
+            
+            # Add spacing after
+            next_line_index = insertion_point + len(entry_lines)
+            if next_line_index < len(lines) and lines[next_line_index].strip() != "":
+                lines.insert(next_line_index, "")
+        else:
+            # Add at the end
+            if lines and lines[-1].strip() != "":
+                lines.append("")
+            entry_lines = new_entry_text.split('\n')
+            lines.extend(entry_lines)
             lines.append("")
-        entry_lines = new_entry_text.split('\n')
-        lines.extend(entry_lines)
-        lines.append("")
-    
-    return '\n'.join(lines)
+        
+        return '\n'.join(lines)
 
     def _extract_term_from_line(self, line: str) -> Optional[str]:
         """Extract the main term from a line for sorting purposes."""
