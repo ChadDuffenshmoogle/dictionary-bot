@@ -302,9 +302,9 @@ class DictionaryManager:
         for i, letter in enumerate(letters):
             terms = grouped[letter]
             
-            if i == 0:
-                # First group (A) - no letter label
-                result_parts.append(', '.join(terms))
+            if letter == 'A':
+                # First group gets A: label like the original
+                result_parts.append(f"A: {', '.join(terms)}")
             elif letter in ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']:
                 # All other letters get explicit labels on new lines
                 result_parts.append(f"\n{letter}: {', '.join(terms)}")
@@ -317,10 +317,9 @@ class DictionaryManager:
         logger.info(f"Inserting '{new_term}' with sort key: '{new_sort_key}'")
         
         lines = body_part.split('\n')
-        insertion_point = None
         
-        # Find all entry starts and their terms for comparison
-        entry_positions = []
+        # Parse the body into atomic units (hyphen blocks or simple entries)
+        units = []  # List of (sort_key, start_line, end_line, term_name)
         i = 0
         
         while i < len(lines):
@@ -328,37 +327,50 @@ class DictionaryManager:
             
             # Check if this line starts a hyphen block
             if line.startswith('-----') and len(line) > 10:
-                # Find the main entry line within this block
                 block_start = i
-                i += 1
-                while i < len(lines):
-                    if lines[i].strip().startswith('-----') and len(lines[i].strip()) > 10:
-                        # End of block
+                block_term = None
+                
+                # Find the main entry line and the end of the block
+                j = i + 1
+                while j < len(lines):
+                    inner_line = lines[j].strip()
+                    
+                    # Found closing hyphens
+                    if inner_line.startswith('-----') and len(inner_line) > 10:
+                        # This is the end of the block
+                        block_end = j
+                        if block_term:
+                            units.append((sort_key_ignore_punct(block_term), block_start, block_end, block_term))
+                        i = j + 1
                         break
                     
-                    # Look for the main entry line (skip etymology, examples, etc.)
-                    inner_line = lines[i].strip()
-                    if (inner_line and 
+                    # Look for the main entry line
+                    if (not block_term and inner_line and 
                         not inner_line.startswith(('Etymology:', 'Ex:', 'Example:', '- ', 'Derived Terms:', 'Notes:'))):
-                        
                         term = self._extract_term_from_line(inner_line)
                         if term:
-                            entry_positions.append((sort_key_ignore_punct(term), block_start, term))
-                            break
+                            block_term = term
+                    
+                    j += 1
+                else:
+                    # Reached end of lines without finding closing hyphens
                     i += 1
-            else:
-                # Check if it's a simple entry
+            
+            # Check if it's a simple entry
+            elif line and not line.startswith('-----'):
                 term = self._extract_term_from_line(line)
                 if term:
-                    entry_positions.append((sort_key_ignore_punct(term), i, term))
-            
-            i += 1
+                    units.append((sort_key_ignore_punct(term), i, i, term))
+                i += 1
+            else:
+                i += 1
         
-        # Find insertion point
-        for sort_key, line_num, term in entry_positions:
+        # Find insertion point among the units
+        insertion_point = None
+        for sort_key, start_line, end_line, term_name in units:
             if new_sort_key < sort_key:
-                insertion_point = line_num
-                logger.info(f"Found insertion point at line {line_num} (before '{term}')")
+                insertion_point = start_line
+                logger.info(f"Found insertion point before '{term_name}' at line {start_line}")
                 break
         
         # Insert the new entry
