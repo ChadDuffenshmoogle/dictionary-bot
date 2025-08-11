@@ -59,31 +59,29 @@ class DictionaryEntry:
 
 def extract_term_from_line(line: str) -> Optional[str]:
     """Extract just the term name for corpus/sorting purposes."""
-    # Try standard pattern first
-    match = re.match(ENTRY_PATTERN, line.strip())
+    line = line.strip()
+    
+    # Handle complex entries that might have multiple definitions or special formatting
+    # First, try the standard pattern
+    match = re.match(r'^([^(]+?)\s*(\([^)]*\))?\s*\(([^)]+)\)\s*-\s*(.+)$', line)
     if match:
-        raw_term = match.group(1)
-        # Remove pronunciation markers to get clean term
-        term = re.sub(r'/[^/]+/', '', raw_term)  # Remove /phonetic/
-        term = re.sub(r'\(pronounced:\s*[^)]+\)', '', term, flags=re.IGNORECASE)  # Remove (pronounced: ...)
-        term = re.sub(r'\[[^\]]+\]', '', term)  # Remove [brackets]
+        raw_term = match.group(1).strip()
+        # Clean up pronunciation markers and other formatting
+        term = re.sub(r'/[^/]+/', '', raw_term)
+        term = re.sub(r'\(pronounced:\s*[^)]+\)', '', term, flags=re.IGNORECASE)
+        term = re.sub(r'\[[^\]]+\]', '', term)
         return term.strip()
     
-    # Try flexible pattern
-    if '(' in line and ')' in line and ' - ' in line:
-        parts = line.split(' - ', 1)
+    # Try simpler patterns for entries that might not match exactly
+    if ' (' in line and ') - ' in line:
+        parts = line.split(' (', 1)
         if len(parts) == 2:
-            left_part = parts[0].strip()
-            # Find last parentheses and extract everything before it
-            paren_matches = list(re.finditer(r'\(([^)]+)\)', left_part))
-            if paren_matches:
-                last_paren = paren_matches[-1]
-                term_part = left_part[:last_paren.start()].strip()
-                # Clean pronunciation markers
-                term = re.sub(r'/[^/]+/', '', term_part)
-                term = re.sub(r'\(pronounced:\s*[^)]+\)', '', term, flags=re.IGNORECASE)
-                term = re.sub(r'\[[^\]]+\]', '', term)
-                return term.strip()
+            term = parts[0].strip()
+            # Clean pronunciation markers
+            term = re.sub(r'/[^/]+/', '', term)
+            term = re.sub(r'\(pronounced:\s*[^)]+\)', '', term, flags=re.IGNORECASE)
+            term = re.sub(r'\[[^\]]+\]', '', term)
+            return term.strip()
     
     return None
 
