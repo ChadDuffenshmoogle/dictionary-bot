@@ -4,10 +4,19 @@ from typing import List, Optional, Dict, Tuple
 from .config import logger, ENTRY_PATTERN
 
 def sort_key_ignore_punct(s: str) -> str:
-    """Strips leading punctuation, returns lowercase remaining string for sorting."""
+    """Strips leading punctuation, handles articles, returns lowercase remaining string for sorting."""
+    # Remove part of speech and everything after it
     term = s.split(' (')[0] if ' (' in s else s
-    return term.lstrip(" '-\"").lower()
-
+    
+    # Remove leading punctuation and quotes
+    term = term.lstrip(" '-\"")
+    
+    # Handle articles: move "the" to the end with a comma
+    if term.lower().startswith('the '):
+        term = term[4:] + ', the'
+    
+    return term.lower()
+    
 class DictionaryEntry:
     """Represents a single dictionary entry."""
     def __init__(self, term: str, pos: str, definition: str, etymology: Optional[str] = None, 
