@@ -180,5 +180,21 @@ Use `!getversion <X.X.X>` to show any version."""
 `!random` - Show a random dictionary entry
 `!search <query>` - Search for terms containing the query
 `!versions` - List all available versions with added terms
-`!help` - Show this help message"""
-        await ctx.send(help_msg)
+`!help` - Show this help message
+
+📝 **Entry Formats for Adding New Terms:**
+
+**Simple Entry:**
+`word (n) - definition`
+
+**With Pronunciation:**
+`word /pronunciation/ (adj) - definition`
+
+**Complex Entry with Etymology:**
+```
+Etymology: from Latin whatever
+word (v) - definition
+- Example: This is how you use it
+```"""
+    
+    await ctx.send(help_msg)
