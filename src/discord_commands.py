@@ -196,5 +196,4 @@ Etymology: from Latin whatever
 word (v) - definition
 - Example: This is how you use it
 ```"""
-    
-    await ctx.send(help_msg)
+        await ctx.send(help_msg)
