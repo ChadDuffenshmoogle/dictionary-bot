@@ -62,33 +62,33 @@ class DictionaryManager:
             return self._extract_corpus_terms_from_content(content)
         return []
 
-def _extract_corpus_terms_from_content(self, content: str) -> List[str]:
-    """Extract all corpus terms from the actual file format."""
-    corpus_match = re.search(r"-----CORPUS-----\s*\n(.*?)\n-----DICTIONARY PROPER-----", content, re.DOTALL)
-    if not corpus_match:
-        logger.warning("Could not find corpus section in content")
-        return []
-    
-    corpus_text = corpus_match.group(1).strip()
-    
-    # Handle the mixed format - split by commas but be smarter about letter labels
-    all_terms = []
-    
-    # Remove letter labels like "C: " and "B: " but keep the terms after them
-    # Also handle the mixed format where some letters have labels and others don't
-    corpus_text = re.sub(r'\n([A-Z]):\s+', r', ', corpus_text)  # Replace "C: term" with ", term"
-    corpus_text = re.sub(r'^([A-Z]):\s+', r'', corpus_text)     # Remove leading "A: "
-    
-    # Now split by commas and clean
-    raw_parts = corpus_text.split(',')
-    
-    for part in raw_parts:
-        term = part.strip()
-        if term and not re.match(r'^[A-Z]$', term):  # Skip single letters
-            all_terms.append(term)
-    
-    logger.info(f"Extracted {len(all_terms)} corpus terms from content")
-    return all_terms
+    def _extract_corpus_terms_from_content(self, content: str) -> List[str]:
+        """Extract all corpus terms from the actual file format."""
+        corpus_match = re.search(r"-----CORPUS-----\s*\n(.*?)\n-----DICTIONARY PROPER-----", content, re.DOTALL)
+        if not corpus_match:
+            logger.warning("Could not find corpus section in content")
+            return []
+        
+        corpus_text = corpus_match.group(1).strip()
+        
+        # Handle the mixed format - split by commas but be smarter about letter labels
+        all_terms = []
+        
+        # Remove letter labels like "C: " and "B: " but keep the terms after them
+        # Also handle the mixed format where some letters have labels and others don't
+        corpus_text = re.sub(r'\n([A-Z]):\s+', r', ', corpus_text)  # Replace "C: term" with ", term"
+        corpus_text = re.sub(r'^([A-Z]):\s+', r'', corpus_text)     # Remove leading "A: "
+        
+        # Now split by commas and clean
+        raw_parts = corpus_text.split(',')
+        
+        for part in raw_parts:
+            term = part.strip()
+            if term and not re.match(r'^[A-Z]$', term):  # Skip single letters
+                all_terms.append(term)
+        
+        logger.info(f"Extracted {len(all_terms)} corpus terms from content")
+        return all_terms
 
     def add_entry(self, term: str, pos: str, definition: str, ety_lines: Optional[List[str]] = None, 
                   example_lines: Optional[List[str]] = None, pronunciation: Optional[str] = None, 
