@@ -277,81 +277,81 @@ class DictionaryManager:
             logger.warning("Could not find -----CORPUS----- section in header")
             return '\n'.join(lines)
 
-def _format_corpus_for_file(self, corpus: List[str]) -> str:
-    """Format corpus to match the original mixed format with letter groupings."""
-    if not corpus:
-        return ""
-    
-    # Group by first letter
-    grouped = {}
-    for term in corpus:
-        clean_term = sort_key_ignore_punct(term)
-        first_letter = clean_term[0].upper() if clean_term else 'A'
-        if first_letter not in grouped:
-            grouped[first_letter] = []
-        grouped[first_letter].append(term)
-    
-    # Sort terms within each group
-    for letter in grouped:
-        grouped[letter] = sorted(grouped[letter], key=sort_key_ignore_punct)
-    
-    # Build corpus text to match the original format exactly
-    result_parts = []
-    letters = sorted(grouped.keys())
-    
-    for i, letter in enumerate(letters):
-        terms = grouped[letter]
+    def _format_corpus_for_file(self, corpus: List[str]) -> str:
+        """Format corpus to match the original mixed format with letter groupings."""
+        if not corpus:
+            return ""
         
-        if i == 0:
-            # First group (A) - no letter label
-            result_parts.append(', '.join(terms))
-        elif letter in ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']:
-            # All other letters get explicit labels on new lines
-            result_parts.append(f"\n{letter}: {', '.join(terms)}")
-    
-    return ''.join(result_parts)
-def _insert_entry_in_body(self, body_part: str, new_term: str, new_entry_text: str) -> str:
-    """Insert the new entry in alphabetical order in the dictionary body."""
-    new_sort_key = sort_key_ignore_punct(new_term)
-    logger.info(f"Inserting '{new_term}' with sort key: '{new_sort_key}'")
-    
-    lines = body_part.split('\n')
-    insertion_point = None
-    
-    # Find all entry starts and their terms for comparison
-    entry_positions = []
-    i = 0
-    
-    while i < len(lines):
-        line = lines[i].strip()
+        # Group by first letter
+        grouped = {}
+        for term in corpus:
+            clean_term = sort_key_ignore_punct(term)
+            first_letter = clean_term[0].upper() if clean_term else 'A'
+            if first_letter not in grouped:
+                grouped[first_letter] = []
+            grouped[first_letter].append(term)
         
-        # Check if this line starts a hyphen block
-        if line.startswith('-----') and len(line) > 10:
-            # Find the main entry line within this block
-            block_start = i
-            i += 1
-            while i < len(lines):
-                if lines[i].strip().startswith('-----') and len(lines[i].strip()) > 10:
-                    # End of block
-                    break
-                
-                # Look for the main entry line (skip etymology, examples, etc.)
-                inner_line = lines[i].strip()
-                if (inner_line and 
-                    not inner_line.startswith(('Etymology:', 'Ex:', 'Example:', '- ', 'Derived Terms:', 'Notes:'))):
-                    
-                    term = self._extract_term_from_line(inner_line)
-                    if term:
-                        entry_positions.append((sort_key_ignore_punct(term), block_start, term))
-                        break
+        # Sort terms within each group
+        for letter in grouped:
+            grouped[letter] = sorted(grouped[letter], key=sort_key_ignore_punct)
+        
+        # Build corpus text to match the original format exactly
+        result_parts = []
+        letters = sorted(grouped.keys())
+        
+        for i, letter in enumerate(letters):
+            terms = grouped[letter]
+            
+            if i == 0:
+                # First group (A) - no letter label
+                result_parts.append(', '.join(terms))
+            elif letter in ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']:
+                # All other letters get explicit labels on new lines
+                result_parts.append(f"\n{letter}: {', '.join(terms)}")
+        
+        return ''.join(result_parts)
+    def _insert_entry_in_body(self, body_part: str, new_term: str, new_entry_text: str) -> str:
+        """Insert the new entry in alphabetical order in the dictionary body."""
+        new_sort_key = sort_key_ignore_punct(new_term)
+        logger.info(f"Inserting '{new_term}' with sort key: '{new_sort_key}'")
+        
+        lines = body_part.split('\n')
+        insertion_point = None
+        
+        # Find all entry starts and their terms for comparison
+        entry_positions = []
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            # Check if this line starts a hyphen block
+            if line.startswith('-----') and len(line) > 10:
+                # Find the main entry line within this block
+                block_start = i
                 i += 1
-        else:
-            # Check if it's a simple entry
-            term = self._extract_term_from_line(line)
-            if term:
-                entry_positions.append((sort_key_ignore_punct(term), i, term))
-        
-        i += 1
+                while i < len(lines):
+                    if lines[i].strip().startswith('-----') and len(lines[i].strip()) > 10:
+                        # End of block
+                        break
+                    
+                    # Look for the main entry line (skip etymology, examples, etc.)
+                    inner_line = lines[i].strip()
+                    if (inner_line and 
+                        not inner_line.startswith(('Etymology:', 'Ex:', 'Example:', '- ', 'Derived Terms:', 'Notes:'))):
+                        
+                        term = self._extract_term_from_line(inner_line)
+                        if term:
+                            entry_positions.append((sort_key_ignore_punct(term), block_start, term))
+                            break
+                    i += 1
+            else:
+                # Check if it's a simple entry
+                term = self._extract_term_from_line(line)
+                if term:
+                    entry_positions.append((sort_key_ignore_punct(term), i, term))
+            
+            i += 1
     
     # Find insertion point
     for sort_key, line_num, term in entry_positions:
