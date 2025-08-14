@@ -101,7 +101,7 @@ def parse_dictionary_entries_conservative(content: str) -> List[DictionaryEntry]
     if "-----DICTIONARY PROPER-----" not in content:
         return entries
 
-    parts = content.split("-----DICTIONARY PROPER-----\n\n", 1)
+    parts = content.split("-----DICTIONARY PROPER-----", 1)
     if len(parts) < 2:
         return entries
 
