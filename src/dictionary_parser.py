@@ -204,7 +204,10 @@ def count_dictionary_entries(content: str) -> int:
     if "-----DICTIONARY PROPER-----" not in content:
         return 0
     
-    body = content.split("-----DICTIONARY PROPER-----\n\n", 1)[1]
+    parts = content.split("-----DICTIONARY PROPER-----", 1)
+    if len(parts) < 2:
+        return 0
+    body = parts[1].lstrip('\n ')
     
     # Count hyphen blocks
     hyphen_blocks = len(re.findall(r'-{20,}.*?-{20,}', body, re.DOTALL))
