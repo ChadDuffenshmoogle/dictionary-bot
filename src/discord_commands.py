@@ -102,24 +102,48 @@ class DictionaryCommands(commands.Cog):
 
     @commands.command(name='search')
     async def search_entries(self, ctx: commands.Context, *, query: str):
-        """Searches for dictionary entries by term or definition."""
+        """Searches for dictionary entries by term or definition.
+        Usage: 
+        !search <query> - search terms only (default)
+        !search -d <query> - search definitions only  
+        !search -a <query> - search both terms and definitions
+        """
+        # Parse flags
+        search_terms = True
+        search_definitions = False
+        
+        if query.startswith('-d '):
+            search_terms = False
+            search_definitions = True
+            query = query[3:]  # Remove the '-d ' flag
+        elif query.startswith('-a '):
+            search_terms = True
+            search_definitions = True
+            query = query[3:]  # Remove the '-a ' flag
+        # Default behavior (no flag) searches terms only
+        
         latest = self.dict_manager.find_latest_version()
-        print(f"Latest version: {latest}")  # Debug line
         entries = self.dict_manager.get_all_entries(latest)
-        print(f"Found {len(entries)} entries")  # Debug line
-        if entries:
-            print(f"First entry: {entries[0]}")  # Debug line
-            print(f"Entry attributes: {dir(entries[0])}")  # Debug line
-
-        matches = [
-            entry for entry in entries
-            if query.lower() in entry.term.lower() or query.lower() in entry.definition.lower()
-        ]
-
+    
+        matches = []
+        for entry in entries:
+            match_found = False
+            
+            if search_terms and query.lower() in entry.term.lower():
+                match_found = True
+            
+            if search_definitions and entry.original_block and query.lower() in entry.original_block.lower():
+                match_found = True
+            
+            if match_found:
+                matches.append(entry)
+    
         if not matches:
-            await ctx.send(f"🔍 No matches found for '{query}'.")
+            search_type = "definitions" if not search_terms else "terms" if not search_definitions else "terms and definitions"
+            await ctx.send(f"🔍 No matches found for '{query}' in {search_type}.")
             return
-
+    
+        # Rest of your existing display logic stays the same
         result_intro = ""
         shown_matches = []
         if len(matches) > 5:
@@ -128,31 +152,29 @@ class DictionaryCommands(commands.Cog):
         else:
             result_intro = f"🔍 Found {len(matches)} match{'es' if len(matches) > 1 else ''} for '{query}':\n\n"
             shown_matches = matches
-
+    
         match_strings = []
         for entry in shown_matches:
             if entry.original_block and entry.definition == "":
-                # For entries with original blocks but no parsed definition, show the original
                 entry_str = f"```{entry.original_block.strip()}```"
             else:
-                # For properly parsed entries
                 entry_str = f"**{entry.term}** ({entry.pos}) - {entry.definition}"
                 if entry.etymology:
                     entry_str += f"\n*Etymology: {entry.etymology}*"
                 if entry.examples:
                     entry_str += "\n" + "\n".join(entry.examples)
             match_strings.append(entry_str)
-
+    
         result = result_intro + "\n\n".join(match_strings)
-
+    
         if len(matches) > 5:
             result += f"\n\n...and {len(matches)-5} more"
-
+    
         if len(result) > 2000:
             result = result[:1950] + "...\n*Message truncated due to Discord character limit*"
-
+    
         await ctx.send(result)
-
+    
     @commands.command(name='versions')
     async def list_versions(self, ctx: commands.Context):
         """Lists all available dictionary versions."""
