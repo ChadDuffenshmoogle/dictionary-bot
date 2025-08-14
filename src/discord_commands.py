@@ -129,11 +129,19 @@ class DictionaryCommands(commands.Cog):
         for entry in entries:
             match_found = False
             
-            if search_terms and query.lower() in entry.term.lower():
-                match_found = True
-            
-            if search_definitions and entry.original_block and query.lower() in entry.original_block.lower():
-                match_found = True
+            if search_terms and not search_definitions:
+                # Terms only
+                if query.lower() in entry.term.lower():
+                    match_found = True
+            elif search_definitions and not search_terms:
+                # Definitions only
+                if entry.original_block and query.lower() in entry.original_block.lower():
+                    match_found = True
+            elif search_terms and search_definitions:
+                # Both terms and definitions
+                if (query.lower() in entry.term.lower() or 
+                    (entry.original_block and query.lower() in entry.original_block.lower())):
+                    match_found = True
             
             if match_found:
                 matches.append(entry)
