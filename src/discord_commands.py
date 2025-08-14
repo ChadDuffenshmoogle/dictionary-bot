@@ -104,7 +104,12 @@ class DictionaryCommands(commands.Cog):
     async def search_entries(self, ctx: commands.Context, *, query: str):
         """Searches for dictionary entries by term or definition."""
         latest = self.dict_manager.find_latest_version()
+        print(f"Latest version: {latest}")  # Debug line
         entries = self.dict_manager.get_all_entries(latest)
+        print(f"Found {len(entries)} entries")  # Debug line
+        if entries:
+            print(f"First entry: {entries[0]}")  # Debug line
+            print(f"Entry attributes: {dir(entries[0])}")  # Debug line
 
         matches = [
             entry for entry in entries
