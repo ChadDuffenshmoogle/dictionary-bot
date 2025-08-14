@@ -131,11 +131,16 @@ class DictionaryCommands(commands.Cog):
 
         match_strings = []
         for entry in shown_matches:
-            entry_str = f"**{entry.term}** ({entry.pos}) - {entry.definition}"
-            if entry.etymology:
-                entry_str += f"\n*Etymology: {entry.etymology}*"
-            if entry.examples:
-                entry_str += "\n" + "\n".join(entry.examples)
+            if entry.original_block and entry.definition == "":
+                # For entries with original blocks but no parsed definition, show the original
+                entry_str = f"**{entry.term}**\n```{entry.original_block.strip()}```"
+            else:
+                # For properly parsed entries
+                entry_str = f"**{entry.term}** ({entry.pos}) - {entry.definition}"
+                if entry.etymology:
+                    entry_str += f"\n*Etymology: {entry.etymology}*"
+                if entry.examples:
+                    entry_str += "\n" + "\n".join(entry.examples)
             match_strings.append(entry_str)
 
         result = result_intro + "\n\n".join(match_strings)
