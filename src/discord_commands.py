@@ -211,6 +211,8 @@ Use `!getversion <X.X.X>` to show any version."""
 `!stats` - Show dictionary statistics
 `!random` - Show a random dictionary entry
 `!search <query>` - Search for terms containing the query
+`!search -d <query>` - Search definitions only
+`!search -a <query>` - Search both terms and definitions
 `!versions` - List all available versions with added terms
 `!help` - Show this help message
 
