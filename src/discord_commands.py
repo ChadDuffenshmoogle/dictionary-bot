@@ -133,7 +133,7 @@ class DictionaryCommands(commands.Cog):
         for entry in shown_matches:
             if entry.original_block and entry.definition == "":
                 # For entries with original blocks but no parsed definition, show the original
-                entry_str = f"**{entry.term}**\n```{entry.original_block.strip()}```"
+                entry_str = f"```{entry.original_block.strip()}```"
             else:
                 # For properly parsed entries
                 entry_str = f"**{entry.term}** ({entry.pos}) - {entry.definition}"
