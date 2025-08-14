@@ -104,8 +104,10 @@ def parse_dictionary_entries_conservative(content: str) -> List[DictionaryEntry]
     parts = content.split("-----DICTIONARY PROPER-----", 1)
     if len(parts) < 2:
         return entries
+    
+    # Handle the body part more carefully - it might have leading whitespace/newlines
+    body = parts[1].lstrip('\n ')
 
-    body = parts[1]
     
     # Find all hyphen-separated blocks and preserve them exactly
     # Split by hyphen patterns but keep track of everything
