@@ -116,7 +116,7 @@ class DictionaryCommands(commands.Cog):
             return
 
         result_intro = ""
-        shown_matches: List[dict] = []
+        shown_matches = []
         if len(matches) > 5:
             result_intro = f"🔍 Found {len(matches)} matches for '{query}' (showing first 5):\n\n"
             shown_matches = matches[:5]
