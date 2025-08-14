@@ -67,12 +67,12 @@ async def on_ready():
         for channel in guild.text_channels:
             if channel.permissions_for(guild.me).send_messages:
                 try:
-                    message = await channel.send("📖 Dictionary Bot is online and ready!")
+                    # message = await channel.send("📖 Dictionary Bot is online and ready!")
                     logger.info(f"Welcome message sent to {channel.name} in {guild.name}")
                     
                     # Delete the message after 2 seconds
-                    await asyncio.sleep(2)
-                    await message.delete()
+                    # await asyncio.sleep(2)
+                    # await message.delete()
                     
                     welcome_sent = True
                     break
