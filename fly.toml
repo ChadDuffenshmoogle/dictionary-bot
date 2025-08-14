@@ -17,5 +17,8 @@ primary_region = "ord"  # Chicago region (close to NIU)
 [deploy]
   strategy = "immediate"
 
+[placement]
+  regions = ["ord"]
+
 # No [[services]] section needed since Discord bots don't serve HTTP traffic
 # No PORT needed since we're not running a web server
