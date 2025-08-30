@@ -228,28 +228,72 @@ class DictionaryCommands(commands.Cog):
             if not line or line.startswith(('Etymology:', 'Ex:', '- ', 'Derived')):
                 continue
             
-            # Check if this looks like a main entry line
-            # Pattern 1: term (pos) - definition
-            if '(' in line and ')' in line and ' - ' in line:
-                term_part = line.split('(')[0].strip()
-                # Remove pronunciation markers
-                term_part = re.sub(r'/[^/]+/', '', term_part)
-                term_part = re.sub(r'\(pronounced:\s*[^)]+\)', '', term_part, flags=re.IGNORECASE)
-                return term_part.strip()
+            # Skip hyphen lines
+            if line.startswith('-----'):
+                continue
             
-            # Pattern 2: term (alt. something) (pos) - for entries like "seil (alt. seyl) (inter.)"
-            # Pattern 3: term (pos) - for entries that end with just the POS
+            # Check if this looks like a main entry line
+            # Try to find the pattern: term(...) - definition OR term(...) 
+            
+            # First, handle entries with " - " (standard format)
+            if ' - ' in line:
+                left_part = line.split(' - ')[0].strip()
+                # Find the actual term by taking everything before the last opening parenthesis
+                # that's followed by what looks like a part of speech
+                
+                # Common parts of speech to look for
+                pos_patterns = [r'\(n\.\)', r'\(adj\.\)', r'\(v\.\)', r'\(inter\.\)', r'\(adv\.\)', 
+                               r'\(mass n\.\)', r'\(prep\.\)', r'\(conj\.\)', r'\(pron\.\)']
+                
+                # Work backwards to find the last POS marker
+                for pos_pattern in pos_patterns:
+                    if re.search(pos_pattern, left_part):
+                        # Split at the last occurrence of this pattern
+                        parts = re.split(pos_pattern, left_part)
+                        if len(parts) >= 1:
+                            term_part = parts[0].strip()
+                            # Clean up term part
+                            term_part = re.sub(r'/[^/]+/', '', term_part)  # Remove phonetics
+                            term_part = re.sub(r'\(pronounced:\s*[^)]+\)', '', term_part, flags=re.IGNORECASE)
+                            # Remove any trailing (alt. ...) parts
+                            term_part = re.sub(r'\s*\(alt\..*?\)\s*$', '', term_part)
+                            return term_part.strip()
+                
+                # Fallback: just take everything before the first parenthesis
+                if '(' in left_part:
+                    term_part = left_part.split('(')[0].strip()
+                    term_part = re.sub(r'/[^/]+/', '', term_part)
+                    term_part = re.sub(r'\(pronounced:\s*[^)]+\)', '', term_part, flags=re.IGNORECASE)
+                    return term_part.strip()
+            
+            # Handle entries without " - " (like "seil (alt. seyl) (inter.)")
             elif '(' in line and ')' in line:
-                # This could be "seil (alt. seyl) (inter.)" or similar
+                # Look for the last parenthesis that contains a part of speech
+                pos_patterns = [r'\(n\.\)', r'\(adj\.\)', r'\(v\.\)', r'\(inter\.\)', r'\(adv\.\)', 
+                               r'\(mass n\.\)', r'\(prep\.\)', r'\(conj\.\)', r'\(pron\.\)']
+                
+                for pos_pattern in pos_patterns:
+                    if re.search(pos_pattern, line):
+                        # Split at this pattern and take everything before it
+                        parts = re.split(pos_pattern, line)
+                        if len(parts) >= 1:
+                            term_part = parts[0].strip()
+                            # Clean up term part
+                            term_part = re.sub(r'/[^/]+/', '', term_part)  # Remove phonetics  
+                            term_part = re.sub(r'\(pronounced:\s*[^)]+\)', '', term_part, flags=re.IGNORECASE)
+                            # Remove any (alt. ...) parts
+                            term_part = re.sub(r'\s*\(alt\..*?\)\s*$', '', term_part)
+                            return term_part.strip()
+                
+                # Fallback for entries with parentheses but no clear POS
                 term_part = line.split('(')[0].strip()
-                # Remove pronunciation markers
                 term_part = re.sub(r'/[^/]+/', '', term_part)
                 term_part = re.sub(r'\(pronounced:\s*[^)]+\)', '', term_part, flags=re.IGNORECASE)
-                if term_part:  # Only return if we actually extracted something
+                if term_part:
                     return term_part.strip()
         
-        return ""
-    
+        return ""    
+        
     @commands.command(name='versions')
     async def list_versions(self, ctx: commands.Context):
         """Lists all available dictionary versions."""
