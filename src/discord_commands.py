@@ -293,6 +293,59 @@ class DictionaryCommands(commands.Cog):
                     return term_part.strip()
         
         return ""    
+
+    @commands.command(name='debug_search')
+    async def debug_search(self, ctx: commands.Context, *, query: str):
+        """Debug search to see what terms are being extracted."""
+        latest = self.dict_manager.find_latest_version()
+        content = self.dict_manager.get_dictionary_content(latest)
+        
+        if "-----DICTIONARY PROPER-----" not in content:
+            await ctx.send("Dictionary format not recognized.")
+            return
+        
+        dict_section = content.split("-----DICTIONARY PROPER-----", 1)[1]
+        
+        # Find entries that might contain the query and show what terms are extracted
+        debug_info = []
+        lines = dict_section.split('\n')
+        current_entry = []
+        
+        for line in lines:
+            stripped = line.strip()
+            
+            if stripped.startswith('-----') and len(stripped) > 10:
+                if current_entry:
+                    entry_text = '\n'.join(current_entry)
+                    if query.lower() in entry_text.lower():
+                        extracted_term = self._extract_term_from_text(entry_text)
+                        debug_info.append(f"Entry: {entry_text[:100]}...")
+                        debug_info.append(f"Extracted term: '{extracted_term}'")
+                        debug_info.append("---")
+                    current_entry = []
+                current_entry = [line]
+            elif current_entry:
+                current_entry.append(line)
+            elif stripped and query.lower() in stripped.lower():
+                extracted_term = self._extract_term_from_text(stripped)
+                debug_info.append(f"Simple entry: {stripped}")
+                debug_info.append(f"Extracted term: '{extracted_term}'")
+                debug_info.append("---")
+        
+        if current_entry:
+            entry_text = '\n'.join(current_entry)
+            if query.lower() in entry_text.lower():
+                extracted_term = self._extract_term_from_text(entry_text)
+                debug_info.append(f"Entry: {entry_text[:100]}...")
+                debug_info.append(f"Extracted term: '{extracted_term}'")
+        
+        if debug_info:
+            result = "\n".join(debug_info)
+            if len(result) > 1900:
+                result = result[:1900] + "..."
+            await ctx.send(f"```{result}```")
+        else:
+            await ctx.send(f"No entries found containing '{query}'")
         
     @commands.command(name='versions')
     async def list_versions(self, ctx: commands.Context):
