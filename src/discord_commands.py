@@ -123,35 +123,57 @@ class DictionaryCommands(commands.Cog):
         # Default behavior (no flag) searches terms only
         
         latest = self.dict_manager.find_latest_version()
-        entries = self.dict_manager.get_all_entries(latest)
-    
+        content = self.dict_manager.get_dictionary_content(latest)
+        
+        if not content:
+            await ctx.send("No dictionary content found.")
+            return
+        
+        # Extract dictionary proper section
+        if "-----DICTIONARY PROPER-----" not in content:
+            await ctx.send("Dictionary format not recognized.")
+            return
+        
+        dict_section = content.split("-----DICTIONARY PROPER-----", 1)[1]
+        
+        # Find all matches directly in the raw content
         matches = []
-        for entry in entries:
-            match_found = False
+        lines = dict_section.split('\n')
+        current_entry = []
+        
+        for line in lines:
+            stripped = line.strip()
             
-            if search_terms and not search_definitions:
-                # Terms only
-                if query.lower() in entry.term.lower():
-                    match_found = True
-            elif search_definitions and not search_terms:
-                # Definitions only
-                if entry.original_block and query.lower() in entry.original_block.lower():
-                    match_found = True
-            elif search_terms and search_definitions:
-                # Both terms and definitions
-                if (query.lower() in entry.term.lower() or 
-                    (entry.original_block and query.lower() in entry.original_block.lower())):
-                    match_found = True
-            
-            if match_found:
-                matches.append(entry)
-    
+            # If we hit hyphens, we're starting or ending an entry block
+            if stripped.startswith('-----') and len(stripped) > 10:
+                if current_entry:
+                    # Process the accumulated entry
+                    entry_text = '\n'.join(current_entry)
+                    if self._matches_search_criteria(entry_text, query, search_terms, search_definitions):
+                        matches.append(entry_text.strip())
+                    current_entry = []
+                # Start collecting the new entry (including the hyphens)
+                current_entry = [line]
+            elif current_entry:
+                # We're inside an entry block
+                current_entry.append(line)
+            elif stripped and not stripped.startswith('-----'):
+                # This might be a simple entry (no hyphens)
+                if self._matches_search_criteria(stripped, query, search_terms, search_definitions):
+                    matches.append(stripped)
+        
+        # Don't forget the last entry if we were building one
+        if current_entry:
+            entry_text = '\n'.join(current_entry)
+            if self._matches_search_criteria(entry_text, query, search_terms, search_definitions):
+                matches.append(entry_text.strip())
+        
         if not matches:
             search_type = "definitions" if not search_terms else "terms" if not search_definitions else "terms and definitions"
             await ctx.send(f"🔍 No matches found for '{query}' in {search_type}.")
             return
-    
-        # Rest of your existing display logic stays the same
+        
+        # Format and send results
         result_intro = ""
         shown_matches = []
         if len(matches) > 5:
@@ -160,28 +182,59 @@ class DictionaryCommands(commands.Cog):
         else:
             result_intro = f"🔍 Found {len(matches)} match{'es' if len(matches) > 1 else ''} for '{query}':\n\n"
             shown_matches = matches
-    
+        
         match_strings = []
-        for entry in shown_matches:
-            if entry.original_block and entry.definition == "":
-                entry_str = f"```{entry.original_block.strip()}```"
-            else:
-                entry_str = f"**{entry.term}** ({entry.pos}) - {entry.definition}"
-                if entry.etymology:
-                    entry_str += f"\n*Etymology: {entry.etymology}*"
-                if entry.examples:
-                    entry_str += "\n" + "\n".join(entry.examples)
-            match_strings.append(entry_str)
-    
+        for match in shown_matches:
+            # Clean up the display
+            cleaned = match.replace('---------------------------------------------', '').strip()
+            if cleaned:
+                match_strings.append(f"```{cleaned}```")
+        
         result = result_intro + "\n\n".join(match_strings)
-    
+        
         if len(matches) > 5:
             result += f"\n\n...and {len(matches)-5} more"
-    
+        
         if len(result) > 2000:
             result = result[:1950] + "...\n*Message truncated due to Discord character limit*"
-    
+        
         await ctx.send(result)
+    
+    def _matches_search_criteria(self, text: str, query: str, search_terms: bool, search_definitions: bool) -> bool:
+        """Helper method to check if text matches search criteria."""
+        text_lower = text.lower()
+        query_lower = query.lower()
+        
+        if search_terms and not search_definitions:
+            # Extract term from the text for term-only search
+            term = self._extract_term_from_text(text)
+            return term and query_lower in term.lower()
+        elif search_definitions and not search_terms:
+            # Search in definitions only - look after the " - " part
+            if ' - ' in text:
+                definition_part = text.split(' - ', 1)[1]
+                return query_lower in definition_part.lower()
+            return False
+        else:
+            # Search both terms and definitions
+            return query_lower in text_lower
+    
+    def _extract_term_from_text(self, text: str) -> str:
+        """Extract the main term from entry text."""
+        # Look for the main entry line (not etymology, examples, etc.)
+        lines = text.split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith(('Etymology:', 'Ex:', '- ', 'Derived')):
+                continue
+            if '(' in line and ')' in line and ' - ' in line:
+                # This looks like the main entry line
+                term_part = line.split('(')[0].strip()
+                # Remove pronunciation markers
+                term_part = re.sub(r'/[^/]+/', '', term_part)
+                term_part = re.sub(r'\(pronounced:\s*[^)]+\)', '', term_part, flags=re.IGNORECASE)
+                return term_part.strip()
+        return ""
     
     @commands.command(name='versions')
     async def list_versions(self, ctx: commands.Context):
