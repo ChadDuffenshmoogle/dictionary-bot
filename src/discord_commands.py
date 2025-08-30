@@ -227,13 +227,27 @@ class DictionaryCommands(commands.Cog):
             line = line.strip()
             if not line or line.startswith(('Etymology:', 'Ex:', '- ', 'Derived')):
                 continue
+            
+            # Check if this looks like a main entry line
+            # Pattern 1: term (pos) - definition
             if '(' in line and ')' in line and ' - ' in line:
-                # This looks like the main entry line
                 term_part = line.split('(')[0].strip()
                 # Remove pronunciation markers
                 term_part = re.sub(r'/[^/]+/', '', term_part)
                 term_part = re.sub(r'\(pronounced:\s*[^)]+\)', '', term_part, flags=re.IGNORECASE)
                 return term_part.strip()
+            
+            # Pattern 2: term (alt. something) (pos) - for entries like "seil (alt. seyl) (inter.)"
+            # Pattern 3: term (pos) - for entries that end with just the POS
+            elif '(' in line and ')' in line:
+                # This could be "seil (alt. seyl) (inter.)" or similar
+                term_part = line.split('(')[0].strip()
+                # Remove pronunciation markers
+                term_part = re.sub(r'/[^/]+/', '', term_part)
+                term_part = re.sub(r'\(pronounced:\s*[^)]+\)', '', term_part, flags=re.IGNORECASE)
+                if term_part:  # Only return if we actually extracted something
+                    return term_part.strip()
+        
         return ""
     
     @commands.command(name='versions')
