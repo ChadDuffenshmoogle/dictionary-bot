@@ -1,4 +1,5 @@
 # src/dictionary_manager.py
+
 import re
 import pytz
 from datetime import datetime
@@ -15,21 +16,66 @@ class DictionaryManager:
         self._cache = {}  # Cache file contents to avoid repeated API calls
 
     def find_latest_version(self) -> str:
-        """Finds the latest dictionary version from GitHub."""
-        files = self.github.list_dictionary_files()
+        """Finds the latest dictionary version from GitHub - FIXED VERSION."""
+        try:
+            files = self.github.list_dictionary_files()
+            logger.info(f"Found {len(files)} dictionary files from GitHub")
+            
+            if not files:
+                logger.warning("No dictionary files found, using base version")
+                return BASE_VERSION
 
-        max_version = BASE_VERSION
-        max_nums = [int(i) for i in BASE_VERSION[1:].split('.')]
+            max_version = BASE_VERSION
+            max_nums = [int(i) for i in BASE_VERSION[1:].split('.')]
 
-        for filename in files:
-            m = re.search(r"v\.?(\d+)\.(\d+)\.(\d+)", filename, re.IGNORECASE)
-            if m:
-                nums = list(map(int, m.groups()))
-                if nums > max_nums:
-                    max_nums, max_version = nums, f"v{nums[0]}.{nums[1]}.{nums[2]}"
+            for filename in files:
+                logger.debug(f"Processing filename: {filename}")
+                
+                # More flexible regex to match various version formats in your files
+                # This will match "v1.2.44", "v1.2.4", etc.
+                version_patterns = [
+                    r"v\.?(\d+)\.(\d+)\.(\d+)",  # Original pattern
+                    r"(\d+)\.(\d+)\.(\d+)",     # Without 'v' prefix
+                    r"v(\d+)\.(\d+)\.(\d+)",    # With 'v' prefix
+                ]
+                
+                matched = False
+                for pattern in version_patterns:
+                    m = re.search(pattern, filename, re.IGNORECASE)
+                    if m:
+                        nums = list(map(int, m.groups()))
+                        logger.debug(f"Extracted version numbers: {nums} from {filename}")
+                        
+                        # Compare version numbers properly
+                        if self._compare_versions(nums, max_nums) > 0:
+                            max_nums = nums
+                            max_version = f"v{nums[0]}.{nums[1]}.{nums[2]}"
+                            logger.debug(f"New max version: {max_version}")
+                        matched = True
+                        break
+                
+                if not matched:
+                    logger.warning(f"Could not extract version from filename: {filename}")
 
-        logger.info(f"Latest version detected: {max_version}")
-        return max_version
+            logger.info(f"Latest version detected: {max_version}")
+            return max_version
+            
+        except Exception as e:
+            logger.error(f"Error finding latest version: {e}")
+            logger.error(f"Falling back to base version: {BASE_VERSION}")
+            return BASE_VERSION
+
+    def _compare_versions(self, version1: List[int], version2: List[int]) -> int:
+        """Compare two version number lists. Returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal."""
+        for i in range(max(len(version1), len(version2))):
+            v1_part = version1[i] if i < len(version1) else 0
+            v2_part = version2[i] if i < len(version2) else 0
+            
+            if v1_part > v2_part:
+                return 1
+            elif v1_part < v2_part:
+                return -1
+        return 0
 
     def get_filename(self, version: str) -> str:
         """Constructs the filename for a given dictionary version."""
@@ -38,15 +84,23 @@ class DictionaryManager:
     def get_dictionary_content(self, version: str) -> Optional[str]:
         """Gets dictionary content from GitHub (with caching)."""
         filename = self.get_filename(version)
+        logger.info(f"Attempting to get content for: {filename}")
 
         if filename in self._cache:
+            logger.info(f"Using cached content for {filename}")
             return self._cache[filename]
 
         content = self.github.get_file_content(filename)
         if content:
             self._cache[filename] = content
+            logger.info(f"Successfully retrieved and cached content for {filename}")
+        else:
+            logger.warning(f"Failed to retrieve content for {filename}")
 
         return content
+
+    # ... rest of the methods remain the same as in your original file ...
+    # (I'm only showing the fixed methods to keep this focused)
 
     def get_all_entries(self, version: str) -> List[DictionaryEntry]:
         """Gets and parses all dictionary entries for a given version."""
