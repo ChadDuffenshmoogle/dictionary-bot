@@ -311,3 +311,73 @@ word (v) - definition
 - Example: This is how you use it
 ```"""
         await ctx.send(help_msg)
+
+    @commands.command(name='debug')
+    async def debug_bot(self, ctx: commands.Context):
+        """Debug command to check bot connectivity and GitHub access."""
+        debug_msg = "🔧 **Bot Debug Information:**\n\n"
+        
+        # Test GitHub connection
+        debug_msg += "**GitHub API Test:**\n"
+        try:
+            connection_ok = self.dict_manager.github.test_connection()
+            if connection_ok:
+                debug_msg += "✅ GitHub API connection successful\n"
+            else:
+                debug_msg += "❌ GitHub API connection failed\n"
+        except Exception as e:
+            debug_msg += f"❌ GitHub API connection error: {str(e)}\n"
+        
+        debug_msg += "\n**Repository Files:**\n"
+        try:
+            files = self.dict_manager.github.list_dictionary_files()
+            if files:
+                debug_msg += f"✅ Found {len(files)} dictionary files:\n"
+                for file in files[:10]:  # Show first 10 files
+                    debug_msg += f"  • {file}\n"
+                if len(files) > 10:
+                    debug_msg += f"  ... and {len(files) - 10} more\n"
+            else:
+                debug_msg += "❌ No dictionary files found\n"
+        except Exception as e:
+            debug_msg += f"❌ Error listing files: {str(e)}\n"
+        
+        debug_msg += "\n**Version Detection:**\n"
+        try:
+            latest_version = self.dict_manager.find_latest_version()
+            debug_msg += f"✅ Latest version detected: {latest_version}\n"
+            
+            # Try to get content for this version
+            content = self.dict_manager.get_dictionary_content(latest_version)
+            if content:
+                debug_msg += f"✅ Successfully loaded content ({len(content)} chars)\n"
+                
+                # Check corpus
+                corpus = self.dict_manager.get_all_corpus(latest_version)
+                debug_msg += f"✅ Corpus loaded: {len(corpus)} terms\n"
+            else:
+                debug_msg += "❌ Failed to load dictionary content\n"
+                
+        except Exception as e:
+            debug_msg += f"❌ Error detecting version: {str(e)}\n"
+        
+        # Environment check
+        debug_msg += "\n**Environment:**\n"
+        import os
+        github_token_set = bool(os.environ.get('YOUR_GITHUB_PAT'))
+        discord_token_set = bool(os.environ.get('DISCORD_TOKEN'))
+        
+        debug_msg += f"{'✅' if github_token_set else '❌'} GitHub token set: {github_token_set}\n"
+        debug_msg += f"{'✅' if discord_token_set else '❌'} Discord token set: {discord_token_set}\n"
+        
+        # If message is too long, split it
+        if len(debug_msg) > 2000:
+            # Send in parts
+            parts = [debug_msg[i:i+1900] for i in range(0, len(debug_msg), 1900)]
+            for i, part in enumerate(parts):
+                if i == 0:
+                    await ctx.send(part)
+                else:
+                    await ctx.send(f"**Debug Info (continued {i+1}):**\n{part}")
+        else:
+            await ctx.send(debug_msg)
