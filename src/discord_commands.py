@@ -298,6 +298,7 @@ Use `!getversion <X.X.X>` to show any version."""
 `!search -d <query>` - Search definitions only
 `!search -a <query>` - Search both terms and definitions
 `!versions` - List all available versions with added terms
+`!wordcloud [filter] [num] [-d]` - Generate word cloud (default 100 terms, -d for full definitions, filter optional)
 `!help` - Show this help message
 
 📝 **Entry Formats for Adding New Terms:**
