@@ -14,6 +14,9 @@ from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 from io import BytesIO
 
+import numpy as np
+from collections import Counter
+
 # To avoid circular imports for type hinting
 if TYPE_CHECKING:
     from .dictionary_manager import DictionaryManager
@@ -539,3 +542,118 @@ word (v) - definition
         except Exception as e:
             logger.error(f"Error generating word cloud: {str(e)}")
             await ctx.send(f"❌ Error generating word cloud: {str(e)}")
+    
+    @commands.command(name='letterheatmap')
+    async def generate_letter_heatmap(self, ctx: commands.Context, *args):
+        """Generates a heatmap showing letter frequency in dictionary terms.
+        Usage: 
+        !letterheatmap [-i]
+        - -i: count only initial letters of terms (default: all letters)
+        
+        Examples:
+        !letterheatmap - all letters across all terms
+        !letterheatmap -i - only first letters of terms
+        """
+        await ctx.send("📊 Generating letter distribution heatmap...")
+        
+        try:
+            import numpy as np
+            from collections import Counter
+            
+            # Check for -i flag
+            initial_only = '-i' in args
+            
+            latest = self.dict_manager.find_latest_version()
+            corpus = self.dict_manager.get_all_corpus(latest)
+            
+            if not corpus:
+                await ctx.send("No terms found in the dictionary corpus.")
+                return
+            
+            # Count letters
+            letter_counts = Counter()
+            
+            if initial_only:
+                # Count only first letters
+                for term in corpus:
+                    first_char = term[0].upper()
+                    if first_char.isalpha():
+                        letter_counts[first_char] += 1
+            else:
+                # Count all letters in all terms
+                for term in corpus:
+                    for char in term:
+                        if char.isalpha():
+                            letter_counts[char.upper()] += 1
+            
+            # Create alphabet array (A-Z)
+            alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            counts = [letter_counts.get(letter, 0) for letter in alphabet]
+            
+            # Create heatmap (5 rows x 6 columns to fit 26 letters, last slot empty)
+            heatmap_data = np.zeros((5, 6))
+            for i, count in enumerate(counts):
+                row = i // 6
+                col = i % 6
+                heatmap_data[row][col] = count
+            
+            # Create the plot
+            fig, ax = plt.subplots(figsize=(12, 8))
+            
+            # Create heatmap
+            im = ax.imshow(heatmap_data, cmap='YlOrRd', aspect='auto')
+            
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=ax)
+            cbar.set_label('Frequency', rotation=270, labelpad=20)
+            
+            # Set up ticks and labels
+            ax.set_xticks(np.arange(6))
+            ax.set_yticks(np.arange(5))
+            
+            # Label with letters
+            for i in range(26):
+                row = i // 6
+                col = i % 6
+                ax.text(col, row, alphabet[i], ha="center", va="center", 
+                       color="black", fontsize=16, fontweight='bold')
+                # Add count below letter
+                ax.text(col, row + 0.3, f"({counts[i]})", ha="center", va="center",
+                       color="black", fontsize=10)
+            
+            # Remove tick labels
+            ax.set_xticklabels([])
+            ax.set_yticklabels([])
+            
+            # Title
+            title = "Letter Distribution - " + ("Initial Letters Only" if initial_only else "All Letters")
+            ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+            
+            # Add grid
+            ax.set_xticks(np.arange(6) - 0.5, minor=True)
+            ax.set_yticks(np.arange(5) - 0.5, minor=True)
+            ax.grid(which="minor", color="white", linestyle='-', linewidth=2)
+            
+            plt.tight_layout()
+            
+            # Save to bytes buffer
+            buffer = BytesIO()
+            plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+            buffer.seek(0)
+            plt.close()
+            
+            # Build description
+            total_count = sum(counts)
+            most_common = max(letter_counts.items(), key=lambda x: x[1]) if letter_counts else ('?', 0)
+            
+            desc = f"📊 Letter Distribution Heatmap\n"
+            desc += f"Mode: {'Initial letters only' if initial_only else 'All letters in all terms'}\n"
+            desc += f"Total {'terms' if initial_only else 'letters'}: {total_count:,}\n"
+            desc += f"Most common: **{most_common[0]}** ({most_common[1]:,} occurrences)"
+            
+            # Send to Discord
+            await ctx.send(desc, file=discord.File(buffer, 'letter_heatmap.png'))
+            
+        except Exception as e:
+            logger.error(f"Error generating letter heatmap: {str(e)}")
+            await ctx.send(f"❌ Error generating letter heatmap: {str(e)}")
