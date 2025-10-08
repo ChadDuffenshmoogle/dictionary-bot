@@ -386,31 +386,91 @@ word (v) - definition
         else:
             await ctx.send(debug_msg)
 
+
     @commands.command(name='wordcloud')
-    async def generate_wordcloud(self, ctx: commands.Context, num_words: int = 100):
+    async def generate_wordcloud(self, ctx: commands.Context, filter_str: str = None, num_words: int = 100, *flags):
         """Generates a word cloud from random dictionary terms.
-        Usage: !wordcloud [num_words] - defaults to 100 words
+        Usage: 
+        !wordcloud [filter] [num_words] [-d] 
+        - filter: only include terms containing this string (optional)
+        - num_words: number of terms to include (default 100)
+        - -d: include full definitions in word cloud
+        
+        Examples:
+        !wordcloud 50 - 50 random terms
+        !wordcloud uni 30 - 30 terms containing "uni"
+        !wordcloud wheel 20 -d - 20 terms with "wheel", including definitions
         """
         await ctx.send("🎨 Generating word cloud...")
         
         try:
+            # Check if filter_str is actually a number (no filter provided)
+            if filter_str and filter_str.isdigit():
+                num_words = int(filter_str)
+                filter_str = None
+            
+            # Check for -d flag
+            include_definitions = '-d' in flags
+            
             latest = self.dict_manager.find_latest_version()
-            corpus = self.dict_manager.get_all_corpus(latest)
             
-            if not corpus:
-                await ctx.send("No terms found in the dictionary corpus.")
-                return
+            if include_definitions:
+                # Get full entries
+                entries = self.dict_manager.get_all_entries(latest)
+                
+                if not entries:
+                    await ctx.send("No entries found in the dictionary.")
+                    return
+                
+                # Filter entries if filter_str provided
+                if filter_str:
+                    filtered_entries = [e for e in entries if filter_str.lower() in e.term.lower()]
+                    if not filtered_entries:
+                        await ctx.send(f"No entries found containing '{filter_str}'.")
+                        return
+                    entries = filtered_entries
+                
+                # Limit num_words to reasonable range
+                num_words = max(10, min(num_words, len(entries)))
+                
+                # Get random sample of entries
+                selected_entries = random.sample(entries, num_words)
+                
+                # Build text from full entries (term + part of speech + definition)
+                text_items = []
+                for entry in selected_entries:
+                    # Format: "term (pos) definition"
+                    entry_text = f"{entry.term}"
+                    if hasattr(entry, 'part_of_speech') and entry.part_of_speech:
+                        entry_text += f" ({entry.part_of_speech})"
+                    if hasattr(entry, 'definition') and entry.definition:
+                        entry_text += f" {entry.definition}"
+                    text_items.append(entry_text.replace(' ', '_'))
+                
+            else:
+                # Just use corpus (terms only)
+                corpus = self.dict_manager.get_all_corpus(latest)
+                
+                if not corpus:
+                    await ctx.send("No terms found in the dictionary corpus.")
+                    return
+                
+                # Filter corpus if filter_str provided
+                if filter_str:
+                    filtered_corpus = [term for term in corpus if filter_str.lower() in term.lower()]
+                    if not filtered_corpus:
+                        await ctx.send(f"No terms found containing '{filter_str}'.")
+                        return
+                    corpus = filtered_corpus
+                
+                # Limit num_words to reasonable range
+                num_words = max(10, min(num_words, len(corpus)))
+                
+                # Get random sample of terms
+                selected_terms = random.sample(corpus, num_words)
+                text_items = [term.replace(' ', '_') for term in selected_terms]
             
-            # Limit num_words to reasonable range
-            num_words = max(10, min(num_words, len(corpus)))
-            
-            # Get random sample of terms
-            selected_terms = random.sample(corpus, num_words)
-            
-            # Convert multi-word terms to single tokens by replacing spaces with underscores
-            # This keeps phrases together in the word cloud
-            tokenized_terms = [term.replace(' ', '_') for term in selected_terms]
-            text = ' '.join(tokenized_terms)
+            text = ' '.join(text_items)
             
             # Generate word cloud
             wordcloud = WordCloud(
@@ -424,7 +484,6 @@ word (v) - definition
             ).generate(text)
             
             # Replace underscores back with spaces in the final image
-            # We do this by regenerating with the underscore-replaced version
             wordcloud_dict = wordcloud.words_
             cleaned_dict = {k.replace('_', ' '): v for k, v in wordcloud_dict.items()}
             
@@ -434,7 +493,7 @@ word (v) - definition
                 background_color='white',
                 colormap='viridis',
                 relative_scaling=0.5,
-                min_font_size=10
+                min_font_size=8 if include_definitions else 10
             ).generate_from_frequencies(cleaned_dict)
             
             # Create the plot
@@ -449,11 +508,18 @@ word (v) - definition
             buffer.seek(0)
             plt.close()
             
+            # Build description message
+            desc = f"☁️ Word cloud with {num_words} random "
+            if filter_str:
+                desc += f"terms containing '{filter_str}'"
+            else:
+                desc += "terms"
+            if include_definitions:
+                desc += " (with definitions)"
+            desc += ":"
+            
             # Send to Discord
-            await ctx.send(
-                f"☁️ Word cloud with {num_words} random terms:",
-                file=discord.File(buffer, 'wordcloud.png')
-            )
+            await ctx.send(desc, file=discord.File(buffer, 'wordcloud.png'))
             
         except Exception as e:
             logger.error(f"Error generating word cloud: {str(e)}")
