@@ -386,14 +386,14 @@ word (v) - definition
         else:
             await ctx.send(debug_msg)
 
-
+    
     @commands.command(name='wordcloud')
     async def generate_wordcloud(self, ctx: commands.Context, *args):
         """Generates a word cloud from random dictionary terms.
         Usage: 
         !wordcloud [filter] [num_words] [-d] 
         - filter: only include terms containing this string (optional)
-        - num_words: number of terms to include (default 100)
+        - num_words: number of terms to include (default 100, max = dictionary size)
         - -d: include full definitions in word cloud (can be anywhere)
         
         Examples:
@@ -413,7 +413,7 @@ word (v) - definition
             
             # Default values
             filter_str = None
-            num_words = 100
+            num_words = 100  # Default to 100
             
             # Parse remaining arguments
             # Look for numbers and strings
@@ -441,7 +441,7 @@ word (v) - definition
                         return
                     entries = filtered_entries
                 
-                # Limit num_words to available entries
+                # Limit to available entries only (no artificial cap)
                 num_words = min(num_words, len(entries))
                 
                 # Get random sample of entries
@@ -475,7 +475,7 @@ word (v) - definition
                         return
                     corpus = filtered_corpus
                 
-                # Limit num_words to available corpus
+                # Limit to available corpus only (no artificial cap)
                 num_words = min(num_words, len(corpus))
                 
                 # Get random sample of terms
@@ -484,7 +484,7 @@ word (v) - definition
             
             text = ' '.join(text_items)
             
-            # Generate word cloud
+            # Generate word cloud with max_words set to num_words
             wordcloud = WordCloud(
                 width=1200, 
                 height=600,
@@ -492,6 +492,7 @@ word (v) - definition
                 colormap='viridis',
                 relative_scaling=0.5,
                 min_font_size=6 if include_definitions else 10,
+                max_words=num_words,  # Allow up to num_words to display
                 regexp=r'\S+'  # This treats underscored phrases as single words
             ).generate(text)
             
@@ -505,7 +506,8 @@ word (v) - definition
                 background_color='white',
                 colormap='viridis',
                 relative_scaling=0.5,
-                min_font_size=6 if include_definitions else 10
+                min_font_size=6 if include_definitions else 10,
+                max_words=num_words  # Allow up to num_words to display
             ).generate_from_frequencies(cleaned_dict)
             
             # Create the plot
