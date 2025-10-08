@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING, List
 from discord.ext import commands
 from .dictionary_parser import count_dictionary_entries
 
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+from io import BytesIO
+
 # To avoid circular imports for type hinting
 if TYPE_CHECKING:
     from .dictionary_manager import DictionaryManager
@@ -381,3 +385,57 @@ word (v) - definition
                     await ctx.send(f"**Debug Info (continued {i+1}):**\n{part}")
         else:
             await ctx.send(debug_msg)
+
+    @commands.command(name='wordcloud')
+    async def generate_wordcloud(self, ctx: commands.Context, num_words: int = 100):
+        """Generates a word cloud from random dictionary terms.
+        Usage: !wordcloud [num_words] - defaults to 100 words
+        """
+        await ctx.send("🎨 Generating word cloud...")
+        
+        try:
+            latest = self.dict_manager.find_latest_version()
+            corpus = self.dict_manager.get_all_corpus(latest)
+            
+            if not corpus:
+                await ctx.send("No terms found in the dictionary corpus.")
+                return
+            
+            # Limit num_words to reasonable range
+            num_words = max(10, min(num_words, len(corpus)))
+            
+            # Get random sample of terms
+            selected_terms = random.sample(corpus, num_words)
+            text = ' '.join(selected_terms)
+            
+            # Generate word cloud
+            wordcloud = WordCloud(
+                width=1200, 
+                height=600,
+                background_color='white',
+                colormap='viridis',
+                relative_scaling=0.5,
+                min_font_size=10
+            ).generate(text)
+            
+            # Create the plot
+            plt.figure(figsize=(12, 6))
+            plt.imshow(wordcloud, interpolation='bilinear')
+            plt.axis('off')
+            plt.tight_layout(pad=0)
+            
+            # Save to bytes buffer
+            buffer = BytesIO()
+            plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+            buffer.seek(0)
+            plt.close()
+            
+            # Send to Discord
+            await ctx.send(
+                f"☁️ Word cloud with {num_words} random terms:",
+                file=discord.File(buffer, 'wordcloud.png')
+            )
+            
+        except Exception as e:
+            logger.error(f"Error generating word cloud: {str(e)}")
+            await ctx.send(f"❌ Error generating word cloud: {str(e)}")
