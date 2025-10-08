@@ -430,8 +430,8 @@ word (v) - definition
                         return
                     entries = filtered_entries
                 
-                # Limit num_words to reasonable range
-                num_words = max(10, min(num_words, len(entries)))
+                # Limit num_words to available entries
+                num_words = min(num_words, len(entries))
                 
                 # Get random sample of entries
                 selected_entries = random.sample(entries, num_words)
@@ -463,8 +463,8 @@ word (v) - definition
                         return
                     corpus = filtered_corpus
                 
-                # Limit num_words to reasonable range
-                num_words = max(10, min(num_words, len(corpus)))
+                # Limit num_words to available corpus
+                num_words = min(num_words, len(corpus))
                 
                 # Get random sample of terms
                 selected_terms = random.sample(corpus, num_words)
