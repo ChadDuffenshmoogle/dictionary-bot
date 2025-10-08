@@ -406,7 +406,11 @@ word (v) - definition
             
             # Get random sample of terms
             selected_terms = random.sample(corpus, num_words)
-            text = ' '.join(selected_terms)
+            
+            # Convert multi-word terms to single tokens by replacing spaces with underscores
+            # This keeps phrases together in the word cloud
+            tokenized_terms = [term.replace(' ', '_') for term in selected_terms]
+            text = ' '.join(tokenized_terms)
             
             # Generate word cloud
             wordcloud = WordCloud(
@@ -415,12 +419,27 @@ word (v) - definition
                 background_color='white',
                 colormap='viridis',
                 relative_scaling=0.5,
-                min_font_size=10
+                min_font_size=10,
+                regexp=r'\S+'  # This treats underscored phrases as single words
             ).generate(text)
+            
+            # Replace underscores back with spaces in the final image
+            # We do this by regenerating with the underscore-replaced version
+            wordcloud_dict = wordcloud.words_
+            cleaned_dict = {k.replace('_', ' '): v for k, v in wordcloud_dict.items()}
+            
+            wordcloud_final = WordCloud(
+                width=1200, 
+                height=600,
+                background_color='white',
+                colormap='viridis',
+                relative_scaling=0.5,
+                min_font_size=10
+            ).generate_from_frequencies(cleaned_dict)
             
             # Create the plot
             plt.figure(figsize=(12, 6))
-            plt.imshow(wordcloud, interpolation='bilinear')
+            plt.imshow(wordcloud_final, interpolation='bilinear')
             plt.axis('off')
             plt.tight_layout(pad=0)
             
