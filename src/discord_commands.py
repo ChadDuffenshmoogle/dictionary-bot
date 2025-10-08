@@ -11,7 +11,7 @@ from discord.ext import commands
 from .dictionary_parser import count_dictionary_entries
 
 from wordcloud import WordCloud
-import matplotlib.pyplot as pltF
+import matplotlib.pyplot as plt
 from io import BytesIO
 
 import numpy as np
