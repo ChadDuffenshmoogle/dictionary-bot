@@ -388,29 +388,40 @@ word (v) - definition
 
 
     @commands.command(name='wordcloud')
-    async def generate_wordcloud(self, ctx: commands.Context, filter_str: str = None, num_words: int = 100, *flags):
+    async def generate_wordcloud(self, ctx: commands.Context, *args):
         """Generates a word cloud from random dictionary terms.
         Usage: 
         !wordcloud [filter] [num_words] [-d] 
         - filter: only include terms containing this string (optional)
         - num_words: number of terms to include (default 100)
-        - -d: include full definitions in word cloud
+        - -d: include full definitions in word cloud (can be anywhere)
         
         Examples:
         !wordcloud 50 - 50 random terms
         !wordcloud uni 30 - 30 terms containing "uni"
-        !wordcloud wheel 20 -d - 20 terms with "wheel", including definitions
+        !wordcloud -d wheel 20 - 20 terms with "wheel", including definitions
+        !wordcloud wheel -d 20 - same as above
         """
         await ctx.send("🎨 Generating word cloud...")
         
         try:
-            # Check if filter_str is actually a number (no filter provided)
-            if filter_str and filter_str.isdigit():
-                num_words = int(filter_str)
-                filter_str = None
+            # Parse arguments
+            include_definitions = '-d' in args
             
-            # Check for -d flag
-            include_definitions = '-d' in flags
+            # Filter out the -d flag from args
+            filtered_args = [arg for arg in args if arg != '-d']
+            
+            # Default values
+            filter_str = None
+            num_words = 100
+            
+            # Parse remaining arguments
+            # Look for numbers and strings
+            for arg in filtered_args:
+                if arg.isdigit():
+                    num_words = int(arg)
+                else:
+                    filter_str = arg
             
             latest = self.dict_manager.find_latest_version()
             
@@ -436,15 +447,16 @@ word (v) - definition
                 # Get random sample of entries
                 selected_entries = random.sample(entries, num_words)
                 
-                # Build text from full entries (term + part of speech + definition)
+                # Build text from full entries using to_string() method
                 text_items = []
                 for entry in selected_entries:
-                    # Format: "term (pos) definition"
-                    entry_text = f"{entry.term}"
-                    if hasattr(entry, 'part_of_speech') and entry.part_of_speech:
-                        entry_text += f" ({entry.part_of_speech})"
-                    if hasattr(entry, 'definition') and entry.definition:
-                        entry_text += f" {entry.definition}"
+                    # Get the full entry string and clean it up
+                    entry_text = entry.to_string()
+                    # Remove separator lines
+                    entry_text = entry_text.replace('-' * 45, '').strip()
+                    # Replace newlines with spaces and collapse multiple spaces
+                    entry_text = ' '.join(entry_text.split())
+                    # Replace spaces with underscores to keep as single token
                     text_items.append(entry_text.replace(' ', '_'))
                 
             else:
@@ -479,7 +491,7 @@ word (v) - definition
                 background_color='white',
                 colormap='viridis',
                 relative_scaling=0.5,
-                min_font_size=10,
+                min_font_size=6 if include_definitions else 10,
                 regexp=r'\S+'  # This treats underscored phrases as single words
             ).generate(text)
             
@@ -493,7 +505,7 @@ word (v) - definition
                 background_color='white',
                 colormap='viridis',
                 relative_scaling=0.5,
-                min_font_size=8 if include_definitions else 10
+                min_font_size=6 if include_definitions else 10
             ).generate_from_frequencies(cleaned_dict)
             
             # Create the plot
