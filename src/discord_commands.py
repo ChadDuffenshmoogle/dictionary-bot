@@ -9,11 +9,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING, List
 from discord.ext import commands
 from .dictionary_parser import count_dictionary_entries
-
 from wordcloud import WordCloud
+import matplotlib
+matplotlib.use('Agg')  # Set backend before importing pyplot
 import matplotlib.pyplot as plt
 from io import BytesIO
-
 import numpy as np
 from collections import Counter
 
