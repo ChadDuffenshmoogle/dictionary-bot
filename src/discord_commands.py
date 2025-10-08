@@ -11,7 +11,7 @@ from discord.ext import commands
 from .dictionary_parser import count_dictionary_entries
 
 from wordcloud import WordCloud
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as pltF
 from io import BytesIO
 
 import numpy as np
@@ -302,6 +302,7 @@ Use `!getversion <X.X.X>` to show any version."""
 `!search -a <query>` - Search both terms and definitions
 `!versions` - List all available versions with added terms
 `!wordcloud [filter] [num] [-d]` - Generate word cloud (default 100 terms, -d for full definitions, filter optional)
+`!letterheatmap [-i]` - Letter frequency heatmap (all letters or -i for initial only)
 `!help` - Show this help message
 
 📝 **Entry Formats for Adding New Terms:**
