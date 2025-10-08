@@ -13,3 +13,4 @@ typing_extensions==4.14.1
 yarl==1.20.1
 wordcloud==1.9.3
 matplotlib==3.9.0
+numpy==1.26.4
