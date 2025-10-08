@@ -658,3 +658,92 @@ word (v) - definition
         except Exception as e:
             logger.error(f"Error generating letter heatmap: {str(e)}")
             await ctx.send(f"❌ Error generating letter heatmap: {str(e)}")
+
+    @commands.command(name='alphabarchart')
+    async def generate_alphabet_bar_chart(self, ctx: commands.Context):
+        """Generates a bar chart showing how many terms start with each letter.
+        Usage: !alphabarchart
+        """
+        await ctx.send("📊 Generating alphabet coverage chart...")
+        
+        try:
+            from collections import Counter
+            
+            latest = self.dict_manager.find_latest_version()
+            corpus = self.dict_manager.get_all_corpus(latest)
+            
+            if not corpus:
+                await ctx.send("No terms found in the dictionary corpus.")
+                return
+            
+            # Count first letters
+            letter_counts = Counter()
+            for term in corpus:
+                first_char = term[0].upper()
+                if first_char.isalpha():
+                    letter_counts[first_char] += 1
+            
+            # Create alphabet array (A-Z)
+            alphabet = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+            counts = [letter_counts.get(letter, 0) for letter in alphabet]
+            
+            # Create the bar chart
+            fig, ax = plt.subplots(figsize=(14, 6))
+            
+            # Create bars with color gradient based on count
+            bars = ax.bar(alphabet, counts, color='skyblue', edgecolor='black', linewidth=0.5)
+            
+            # Color bars based on count (gradient)
+            max_count = max(counts) if counts else 1
+            for bar, count in zip(bars, counts):
+                # Color gradient from light to dark blue
+                intensity = count / max_count if max_count > 0 else 0
+                bar.set_color(plt.cm.Blues(0.3 + intensity * 0.7))
+            
+            # Add count labels on top of bars
+            for i, (letter, count) in enumerate(zip(alphabet, counts)):
+                if count > 0:
+                    ax.text(i, count + max_count * 0.01, str(count), 
+                           ha='center', va='bottom', fontsize=9, fontweight='bold')
+            
+            # Styling
+            ax.set_xlabel('Letter', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Number of Terms', fontsize=12, fontweight='bold')
+            ax.set_title('Alphabet Coverage - Terms Starting with Each Letter', 
+                        fontsize=14, fontweight='bold', pad=20)
+            ax.grid(axis='y', alpha=0.3, linestyle='--')
+            ax.set_axisbelow(True)
+            
+            # Add statistics text box
+            total_terms = len(corpus)
+            letters_with_terms = sum(1 for c in counts if c > 0)
+            most_common = max(letter_counts.items(), key=lambda x: x[1]) if letter_counts else ('?', 0)
+            least_common_letters = [letter for letter, count in zip(alphabet, counts) if count == 0]
+            
+            stats_text = f"Total Terms: {total_terms}\n"
+            stats_text += f"Letters with Terms: {letters_with_terms}/26\n"
+            stats_text += f"Most Common: {most_common[0]} ({most_common[1]} terms)"
+            if least_common_letters:
+                stats_text += f"\nMissing: {', '.join(least_common_letters)}"
+            
+            ax.text(0.98, 0.97, stats_text, transform=ax.transAxes,
+                   fontsize=10, verticalalignment='top', horizontalalignment='right',
+                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+            
+            plt.tight_layout()
+            
+            # Save to bytes buffer
+            buffer = BytesIO()
+            plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+            buffer.seek(0)
+            plt.close()
+            
+            # Send to Discord
+            await ctx.send(
+                f"📊 Alphabet coverage for {total_terms} terms:",
+                file=discord.File(buffer, 'alphabet_coverage.png')
+            )
+            
+        except Exception as e:
+            logger.error(f"Error generating alphabet bar chart: {str(e)}")
+            await ctx.send(f"❌ Error generating alphabet bar chart: {str(e)}")
