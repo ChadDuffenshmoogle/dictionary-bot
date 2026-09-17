@@ -77,12 +77,9 @@ class DictionaryCommands(commands.Cog):
         stats_msg = f"""📊 **Unicyclist Dictionary Statistics** as of {formatted_datetime}:
 
 **Latest Version:** {latest}
-**Corpus Terms:** {corpus_count:,}
 **Dictionary Entries:** {entry_count:,}
-**Entries with Etymology:** {ety_count:,}
 **File Size:** {size_kb} KB
-**Storage:** GitHub Repository
-**GitHub Repo:** `{GITHUB_OWNER}/{GITHUB_REPO}`"""
+**For more stats, see the website:** https://chadduffenshmoogle.github.io/dictionary-versions/"""
 
         await ctx.send(stats_msg)
 
