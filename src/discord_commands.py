@@ -64,8 +64,6 @@ class DictionaryCommands(commands.Cog):
             await ctx.send("No dictionary file found to get stats from.")
             return
 
-        corpus = self.dict_manager.get_all_corpus(latest)
-        corpus_count = len(corpus)
         entry_count = count_dictionary_entries(content)
         ety_count = content.count("Etymology:")
         size_kb = round(len(content.encode('utf-8')) / 1024, 1)
@@ -467,26 +465,26 @@ zoog:
                     text_items.append(entry_text.replace(' ', '_'))
                 
             else:
-                # Just use corpus (terms only)
-                corpus = self.dict_manager.get_all_corpus(latest)
+                # Just use terms, no definitions
+                terms = [e.term for e in self.dict_manager.get_all_entries(latest)]
                 
-                if not corpus:
-                    await ctx.send("No terms found in the dictionary corpus.")
+                if not terms:
+                    await ctx.send("No terms found in the dictionary.")
                     return
                 
-                # Filter corpus if filter_str provided
+                # Filter terms if filter_str provided
                 if filter_str:
-                    filtered_corpus = [term for term in corpus if filter_str.lower() in term.lower()]
-                    if not filtered_corpus:
+                    filtered_terms = [term for term in terms if filter_str.lower() in term.lower()]
+                    if not filtered_terms:
                         await ctx.send(f"No terms found containing '{filter_str}'.")
                         return
-                    corpus = filtered_corpus
+                    terms = filtered_terms
                 
-                # Limit to available corpus only (no artificial cap)
-                num_words = min(num_words, len(corpus))
+                # Limit to available terms only (no artificial cap)
+                num_words = min(num_words, len(terms))
                 
                 # Get random sample of terms
-                selected_terms = random.sample(corpus, num_words)
+                selected_terms = random.sample(terms, num_words)
                 text_items = [term.replace(' ', '_') for term in selected_terms]
             
             text = ' '.join(text_items)
@@ -567,10 +565,10 @@ zoog:
             initial_only = '-i' in args
             
             latest = self.dict_manager.find_latest_version()
-            corpus = self.dict_manager.get_all_corpus(latest)
+            terms = [e.term for e in self.dict_manager.get_all_entries(latest)]
             
-            if not corpus:
-                await ctx.send("No terms found in the dictionary corpus.")
+            if not terms:
+                await ctx.send("No terms found in the dictionary.")
                 return
             
             # Count letters
@@ -578,13 +576,13 @@ zoog:
             
             if initial_only:
                 # Count only first letters
-                for term in corpus:
+                for term in terms:
                     first_char = term[0].upper()
                     if first_char.isalpha():
                         letter_counts[first_char] += 1
             else:
                 # Count all letters in all terms
-                for term in corpus:
+                for term in terms:
                     for char in term:
                         if char.isalpha():
                             letter_counts[char.upper()] += 1
@@ -672,15 +670,15 @@ zoog:
             from collections import Counter
             
             latest = self.dict_manager.find_latest_version()
-            corpus = self.dict_manager.get_all_corpus(latest)
+            terms = [e.term for e in self.dict_manager.get_all_entries(latest)]
             
-            if not corpus:
-                await ctx.send("No terms found in the dictionary corpus.")
+            if not terms:
+                await ctx.send("No terms found in the dictionary.")
                 return
             
             # Count first letters
             letter_counts = Counter()
-            for term in corpus:
+            for term in terms:
                 first_char = term[0].upper()
                 if first_char.isalpha():
                     letter_counts[first_char] += 1
@@ -717,7 +715,7 @@ zoog:
             ax.set_axisbelow(True)
             
             # Add statistics text box
-            total_terms = len(corpus)
+            total_terms = len(terms)
             letters_with_terms = sum(1 for c in counts if c > 0)
             most_common = max(letter_counts.items(), key=lambda x: x[1]) if letter_counts else ('?', 0)
             least_common_letters = [letter for letter, count in zip(alphabet, counts) if count == 0]
