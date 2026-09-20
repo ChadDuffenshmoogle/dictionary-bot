@@ -223,15 +223,21 @@ class DictionaryManager:
         return re.sub(r'^ZOOGLIOGRAPHY - .+\n\n?', '', content, count=1)
 
     def add_to_zoogliography(self, text: str) -> bool:
-        """Appends a line to the single Zoogliography.txt file in the repo,
-        creating it if it doesn't exist. Unlike the dictionary itself, this
-        file has no versioning -- it's just overwritten in place each time.
-        Keeps a dictionary-style header (title + last-updated timestamp)
-        at the top, refreshed on every change."""
+        """Adds a line to the single Zoogliography.txt file in the repo,
+        keeping the whole list alphabetized the same way the dictionary
+        itself is (sort_key_ignore_punct). Creates the file if it doesn't
+        exist. Unlike the dictionary, this file has no versioning -- it's
+        just overwritten in place each time. Keeps a dictionary-style
+        header (title + last-updated timestamp) at the top, refreshed on
+        every change."""
         existing = self.github.get_file_content("Zoogliography.txt") or ""
-        body = self._strip_zoog_header(existing).rstrip("\n")
-        new_body = f"{body}\n{text}" if body else text
+        body = self._strip_zoog_header(existing).strip("\n")
 
+        lines = [line for line in body.split("\n") if line.strip()] if body else []
+        lines.append(text)
+        lines = sorted(set(lines), key=sort_key_ignore_punct)
+
+        new_body = "\n".join(lines)
         new_content = f"ZOOGLIOGRAPHY - {self._zoog_timestamp()}\n\n{new_body}"
         commit_message = f"Add to Zoogliography: '{text[:60]}'"
 
@@ -241,7 +247,7 @@ class DictionaryManager:
         else:
             logger.error(f"Failed to add to Zoogliography: {text}")
         return success
-
+        
     def remove_from_zoogliography(self, text: str) -> bool:
         """Removes a line matching `text` from Zoogliography.txt (exact
         match, case-insensitive, ignoring surrounding whitespace). Returns
