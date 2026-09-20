@@ -108,6 +108,24 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
+    # Passive "zoog: " detection -- separate from dictionary entry
+    # parsing. Anything after the prefix gets appended to Zoogliography.txt.
+    zoog_match = re.match(r'^zoog:\s*(.+)$', content, re.IGNORECASE | re.DOTALL)
+    if zoog_match:
+        zoog_text = zoog_match.group(1).strip()
+        if zoog_text:
+            success = dict_manager.add_to_zoogliography(zoog_text)
+            if success:
+                await message.add_reaction('✅')
+                await asyncio.sleep(4)
+                await message.remove_reaction('✅', bot.user)
+            else:
+                await message.add_reaction('❌')
+                await message.channel.send("❌ Could not add to Zoogliography.")
+        else:
+            await message.channel.send("📝 Add something after `zoog: ` to add it.")
+        return  # don't fall through to entry parsing or commands
+
     # Try to parse the entire message as a dictionary entry using the new parser
     from .dictionary_parser import parse_message_as_entry
     
