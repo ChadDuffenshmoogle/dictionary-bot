@@ -228,6 +228,32 @@ class DictionaryManager:
             logger.error(f"Failed to add to Zoogliography: {text}")
         return success
 
+    def remove_from_zoogliography(self, text: str) -> bool:
+        """Removes a line matching `text` from Zoogliography.txt (exact
+        match, case-insensitive, ignoring surrounding whitespace). Returns
+        False if the file doesn't exist or no line matches."""
+        existing = self.github.get_file_content("Zoogliography.txt")
+        if not existing:
+            return False
+
+        lines = existing.split("\n")
+        target = text.strip().lower()
+        new_lines = [line for line in lines if line.strip().lower() != target]
+
+        if len(new_lines) == len(lines):
+            logger.warning(f"'{text}' not found in Zoogliography, nothing removed")
+            return False
+
+        new_content = "\n".join(new_lines).strip("\n")
+        commit_message = f"Remove from Zoogliography: '{text[:60]}'"
+
+        success = self.github.create_or_update_file("Zoogliography.txt", new_content, commit_message)
+        if success:
+            logger.info(f"Removed from Zoogliography: {text}")
+        else:
+            logger.error(f"Failed to remove from Zoogliography: {text}")
+        return success
+
     def _format_new_entry(self, term: str, pos: str, definition: str, pronunciation: Optional[str] = None,
                          ety_lines: Optional[List[str]] = None, example_lines: Optional[List[str]] = None,
                          additional_info: Optional[List[str]] = None) -> str:
