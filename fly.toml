@@ -3,15 +3,12 @@ app = "dictionary-bot"
 primary_region = "ord"  # Chicago region (close to NIU)
 
 [build]
-  # Remove the 'builder' line to let Fly.io use your Dockerfile.
-  # The presence of a Dockerfile in the root of your repo is enough.
+  # Dockerfile in repo root is used automatically
 
 [env]
-  # Environment variables (non-secret ones only)
-  # Add any non-sensitive config here if needed
+  # Non-secret env vars here if needed
 
 [processes]
-  # Update the worker process to match the Dockerfile CMD
   worker = "python -m src.main"
 
 [deploy]
@@ -20,9 +17,6 @@ primary_region = "ord"  # Chicago region (close to NIU)
 [placement]
   regions = ["ord"]
 
-# No [[services]] section needed since Discord bots don't serve HTTP traffic. But lets do it anyway because Claude said it could fix the random suspended state
-[http_service]
-  auto_stop_machines = false
-  auto_start_machines = true
-  min_machines_running = 1
-# No PORT needed since we're not running a web server
+# No [http_service] or [[services]] -- this bot doesn't serve HTTP traffic,
+# and a plain worker process with no service block isn't subject to Fly's
+# idle-based auto-stop/suspend logic at all.
