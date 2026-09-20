@@ -5,6 +5,9 @@ import discord
 import re
 import asyncio
 from discord.ext import commands
+import random
+from datetime import datetime, timedelta
+from discord.ext import tasks
 
 # Import modules from our new modular structure
 from .config import DISCORD_TOKEN, logger, ENTRY_PATTERN
@@ -22,6 +25,64 @@ bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)  # Di
 # Initialize GitHub API and dictionary manager globally
 github_api = GitHubAPI()
 dict_manager = DictionaryManager(github_api)
+
+IDLE_ACTIVITIES = {
+    'common': [
+        ('playing', 'Wordle'),
+        ('playing', 'Scrabble'),
+        ('playing', 'Boggle'),
+        ('watching', 'Wheel of Fortune'),
+        ('watching', 'WordGirl'),
+        ('watching', 'Countdown (UK)'),
+        ('listening', 'The Alphabet Song'),
+        ('listening', 'Word Crimes'),
+        ('competing', 'the Scripps National Spelling Bee'),
+    ],
+    'infrequent': [
+        ('playing', 'Taboo'),
+        ('playing', 'Bananagrams'),
+        ('playing', 'NYT Connections'),
+        ('playing', 'NYT Crossword'),
+        ('playing', 'NYT Mini Crossword'),
+        ('playing', 'Words with Friends'),
+        ('playing', 'Wordscapes'),
+        ('playing', 'Scattergories'),
+        ('watching', 'WordWorld'),
+        ('watching', 'Password'),
+        ('watching', 'The Professor and the Madman'),
+    ],
+    'rare': [
+        ('playing', 'Call of Duty: Black Ops 2'),
+        ('playing', 'Clair Obscur: Expedition 33'),
+        ('playing', 'The Elder Scrolls IV: Oblivion'),
+        ('playing', 'Tekken 8'),
+        ('watching', 'John Wick'),
+        ('watching', 'Breaking Bad'),
+    ],
+}
+CATEGORY_WEIGHTS = {'common': 79, 'infrequent': 20, 'rare': 1}
+
+def build_idle_activity():
+    kinds = {
+        'playing': lambda n: discord.Game(name=n),
+        'watching': lambda n: discord.Activity(type=discord.ActivityType.watching, name=n),
+        'listening': lambda n: discord.Activity(type=discord.ActivityType.listening, name=n),
+        'competing': lambda n: discord.Activity(type=discord.ActivityType.competing, name=n),
+    }
+    categories = list(CATEGORY_WEIGHTS.keys())
+    weights = list(CATEGORY_WEIGHTS.values())
+    category = random.choices(categories, weights=weights, k=1)[0]
+    kind, name = random.choice(IDLE_ACTIVITIES[category])
+    return kinds[kind](name)
+
+# Tracks when a word was last successfully added, to know when to switch
+# to an idle activity. Resets on bot restart since it's in-memory only.
+last_word_time = datetime.utcnow()
+
+@tasks.loop(minutes=30)
+async def idle_status_checker():
+    if datetime.utcnow() - last_word_time >= timedelta(hours=12):
+        await bot.change_presence(activity=build_idle_activity())
 
 @bot.event
 async def on_ready():
@@ -59,6 +120,9 @@ async def on_ready():
         # Log the full traceback for debugging
         import traceback
         logger.error(f"Full error: {traceback.format_exc()}")
+
+    if not idle_status_checker.is_running():
+        idle_status_checker.start()
 
     # Find a suitable channel to send a welcome message
     welcome_sent = False
@@ -198,6 +262,9 @@ async def on_message(message):
                 )
                 
                 if success:
+                    global last_word_time
+                    last_word_time = datetime.utcnow()
+
                     truncated_term = parsed_entry.term if len(parsed_entry.term) <= 50 else parsed_entry.term[:47] + '...'
                     
                     await message.add_reaction('✅')
