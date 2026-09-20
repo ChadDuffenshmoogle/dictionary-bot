@@ -111,6 +111,7 @@ async def on_message(message):
     # Passive "zoog: " detection -- separate from dictionary entry
     # parsing. Anything after the prefix gets appended to Zoogliography.txt.
     zoog_match = re.match(r'^zoog:\s*(.+)$', content, re.IGNORECASE | re.DOTALL)
+    
     if zoog_match:
         zoog_text = zoog_match.group(1).strip()
         if zoog_text:
@@ -125,6 +126,24 @@ async def on_message(message):
         else:
             await message.channel.send("📝 Add something after `zoog: ` to add it.")
         return  # don't fall through to entry parsing or commands
+
+    # Passive "dezoog: " / "de-zoog: " detection -- removes a matching
+    # line from Zoogliography.txt.
+    dezoog_match = re.match(r'^de-?zoog:\s*(.+)$', content, re.IGNORECASE | re.DOTALL)
+    if dezoog_match:
+        dezoog_text = dezoog_match.group(1).strip()
+        if dezoog_text:
+            success = dict_manager.remove_from_zoogliography(dezoog_text)
+            if success:
+                await message.add_reaction('✅')
+                await asyncio.sleep(4)
+                await message.remove_reaction('✅', bot.user)
+            else:
+                await message.add_reaction('❌')
+                await message.channel.send(f"❌ Could not find '{dezoog_text}' in Zoogliography to remove.")
+        else:
+            await message.channel.send("📝 Add something after `dezoog: ` to remove it.")
+        return
 
     # Try to parse the entire message as a dictionary entry using the new parser
     from .dictionary_parser import parse_message_as_entry
