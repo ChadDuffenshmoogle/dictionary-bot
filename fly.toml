@@ -20,5 +20,9 @@ primary_region = "ord"  # Chicago region (close to NIU)
 [placement]
   regions = ["ord"]
 
-# No [[services]] section needed since Discord bots don't serve HTTP traffic
+# No [[services]] section needed since Discord bots don't serve HTTP traffic. But lets do it anyway because Claude said it could fix the random suspended state
+[http_service]
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
 # No PORT needed since we're not running a web server
