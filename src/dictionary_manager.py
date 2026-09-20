@@ -161,12 +161,12 @@ class DictionaryManager:
             logger.error(f"Could not get content for version {latest}. Cannot add entry.")
             return False
 
-        # Extract corpus for checking duplicates and updating
-        corpus = self.get_all_corpus(latest)
-        logger.info(f"Loaded {len(corpus)} corpus terms for version {latest}")
+        # No CORPUS section in the file anymore -- check duplicates
+        # against the actual parsed dictionary entries instead.
+        existing_entries = self.get_all_entries(latest)
+        logger.info(f"Loaded {len(existing_entries)} entries for version {latest}")
 
-        # Check if term already exists (case-insensitive)
-        if any(term.lower() == existing_term.lower() for existing_term in corpus):
+        if any(term.lower() == e.term.lower() for e in existing_entries):
             logger.warning(f"Term '{term}' already exists—skipping addition.")
             return False
 
