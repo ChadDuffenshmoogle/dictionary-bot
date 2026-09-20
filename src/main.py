@@ -207,8 +207,8 @@ async def on_message(message):
                     entries = dict_manager.get_all_entries(latest_version)
                     word_number = len(entries)
                     status_text = f"#{word_number}: {truncated_term}"
-                    await bot.change_presence(activity=discord.CustomActivity(name=status_text))
-
+                    await bot.change_presence(activity=discord.CustomActivity(name=status_text, emoji="🔤"))
+                    
                     # Remove the reaction after 4 seconds
                     await asyncio.sleep(4)
                     await message.remove_reaction('✅', bot.user)
