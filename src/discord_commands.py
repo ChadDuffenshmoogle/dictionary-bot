@@ -290,6 +290,7 @@ Use `!getversion <X.X.X>` to show any version."""
     async def send_help_message(self, ctx: commands.Context):
         """Sends the help message for the bot."""
         help_msg = f"""📖 **Dictionary Bot Commands:**
+Statistics and data viz: https://chadduffenshmoogle.github.io/dictionary-versions/
 
 `!getversion [version]` - Download a specific version or latest (default)
 `!stats` - Show dictionary statistics
@@ -308,13 +309,17 @@ Use `!getversion <X.X.X>` to show any version."""
 `word (n) - definition`
 
 **With Pronunciation:**
-`word /pronunciation/ (adj) - definition`
+`word (adj) - /pronunciation/ definition`
 
 **Complex Entry with Etymology:**
 ```
 Etymology: from Latin whatever
 word (v) - definition
 - Example: This is how you use it
+```
+**Undefined word storage:**
+```
+zoog: 
 ```"""
         await ctx.send(help_msg)
 
