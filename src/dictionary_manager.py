@@ -5,7 +5,7 @@ import pytz
 from datetime import datetime
 from typing import Optional, List
 from .github_api import GitHubAPI
-from .dictionary_parser import DictionaryEntry, parse_dictionary_entries, get_corpus_from_content, sort_key_ignore_punct
+from .dictionary_parser import DictionaryEntry, parse_dictionary_entries, sort_key_ignore_punct
 from .config import BASE_VERSION, FILE_PREFIX, FILE_EXTENSION, logger, ENTRY_PATTERN
 
 class DictionaryManager:
@@ -99,50 +99,12 @@ class DictionaryManager:
 
         return content
 
-    # ... rest of the methods remain the same as in your original file ...
-    # (I'm only showing the fixed methods to keep this focused)
-
     def get_all_entries(self, version: str) -> List[DictionaryEntry]:
         """Gets and parses all dictionary entries for a given version."""
         content = self.get_dictionary_content(version)
         if content:
             return parse_dictionary_entries(content)
         return []
-
-    def get_all_corpus(self, version: str) -> List[str]:
-        """Gets all corpus terms for a given version - FIXED VERSION."""
-        content = self.get_dictionary_content(version)
-        if content:
-            return self._extract_corpus_terms_from_content(content)
-        return []
-
-    def _extract_corpus_terms_from_content(self, content: str) -> List[str]:
-        """Extract all corpus terms from the actual file format."""
-        corpus_match = re.search(r"-----CORPUS-----\s*\n(.*?)\n-----DICTIONARY PROPER-----", content, re.DOTALL)
-        if not corpus_match:
-            logger.warning("Could not find corpus section in content")
-            return []
-        
-        corpus_text = corpus_match.group(1).strip()
-        
-        # Handle the mixed format - split by commas but be smarter about letter labels
-        all_terms = []
-        
-        # Remove letter labels like "C: " and "B: " but keep the terms after them
-        # Also handle the mixed format where some letters have labels and others don't
-        corpus_text = re.sub(r'\n([A-Z]):\s+', r', ', corpus_text)  # Replace "C: term" with ", term"
-        corpus_text = re.sub(r'^([A-Z]):\s+', r'', corpus_text)     # Remove leading "A: "
-        
-        # Now split by commas and clean
-        raw_parts = corpus_text.split(',')
-        
-        for part in raw_parts:
-            term = part.strip()
-            if term and not re.match(r'^[A-Z]$', term):  # Skip single letters
-                all_terms.append(term)
-        
-        logger.info(f"Extracted {len(all_terms)} corpus terms from content")
-        return all_terms
 
     def add_entry(self, term: str, pos: str, definition: str, ety_lines: Optional[List[str]] = None, 
                   example_lines: Optional[List[str]] = None, pronunciation: Optional[str] = None, 
@@ -185,8 +147,8 @@ class DictionaryManager:
         if "-----DICTIONARY PROPER-----" in latest_content:
             header_part, body_part = latest_content.split("-----DICTIONARY PROPER-----", 1)
             
-            # Update header with new version, timestamp, and corpus
-            new_header = self._update_header(header_part, new_version, timestamp, new_corpus)
+            # Update header with new version and timestamp
+            new_header = self._update_header(header_part, new_version, timestamp)
             
             # Find insertion point and insert new entry in body
             new_body = self._insert_entry_in_body(body_part, term, new_entry_text)
@@ -331,78 +293,11 @@ class DictionaryManager:
         
         return result
 
-    def _update_header(self, header_part: str, new_version: str, timestamp: str, new_corpus: List[str]) -> str:
-        """Update the header with new version, timestamp, and corpus."""
+    def _update_header(self, header_part: str, new_version: str, timestamp: str) -> str:
+        """Update the header with the new version and timestamp."""
         lines = header_part.split('\n')
-        
-        # Replace the first line with new version and timestamp
         lines[0] = f"{FILE_PREFIX} {new_version} - {timestamp}"
-        
-        # Find where corpus starts and ends
-        corpus_start = None
-        corpus_end = None
-        
-        for i, line in enumerate(lines):
-            if line.strip() == "-----CORPUS-----":
-                corpus_start = i + 1  # Start after the corpus header
-                break
-        
-        if corpus_start is not None:
-            # Find end of corpus (empty line before -----DICTIONARY PROPER-----)
-            corpus_end = corpus_start
-            while corpus_end < len(lines):
-                if lines[corpus_end].strip() == "":
-                    # Check if next non-empty line is -----DICTIONARY PROPER-----
-                    next_idx = corpus_end + 1
-                    while next_idx < len(lines) and lines[next_idx].strip() == "":
-                        next_idx += 1
-                    if next_idx < len(lines) and "-----DICTIONARY PROPER-----" in lines[next_idx]:
-                        break
-                corpus_end += 1
-            
-            # Generate new corpus content in the original mixed format
-            formatted_corpus = self._format_corpus_for_file(new_corpus)
-            
-            # Replace corpus section, preserving the empty line before -----DICTIONARY PROPER-----
-            new_lines = lines[:corpus_start] + [formatted_corpus, ""] + lines[corpus_end:]
-            return '\n'.join(new_lines)
-        else:
-            logger.warning("Could not find -----CORPUS----- section in header")
-            return '\n'.join(lines)
-
-    def _format_corpus_for_file(self, corpus: List[str]) -> str:
-        """Format corpus to match the original mixed format with letter groupings."""
-        if not corpus:
-            return ""
-        
-        # Group by first letter
-        grouped = {}
-        for term in corpus:
-            clean_term = sort_key_ignore_punct(term)
-            first_letter = clean_term[0].upper() if clean_term else 'A'
-            if first_letter not in grouped:
-                grouped[first_letter] = []
-            grouped[first_letter].append(term)
-        
-        # Sort terms within each group
-        for letter in grouped:
-            grouped[letter] = sorted(grouped[letter], key=sort_key_ignore_punct)
-        
-        # Build corpus text to match the original format exactly
-        result_parts = []
-        letters = sorted(grouped.keys())
-        
-        for i, letter in enumerate(letters):
-            terms = grouped[letter]
-            
-            if letter == 'A':
-                # First group gets A: label like the original
-                result_parts.append(f"A: {', '.join(terms)}")
-            elif letter in ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']:
-                # All other letters get explicit labels on new lines
-                result_parts.append(f"\n{letter}: {', '.join(terms)}")
-        
-        return ''.join(result_parts)
+        return '\n'.join(lines)
 
     def _insert_entry_in_body(self, body_part: str, new_term: str, new_entry_text: str) -> str:
         """Insert the new entry in alphabetical order in the dictionary body."""
