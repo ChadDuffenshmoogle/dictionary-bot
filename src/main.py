@@ -179,15 +179,15 @@ async def on_message(message):
                 )
                 
                 if success:
-                    # Truncate the term for the status if it's too long
                     truncated_term = parsed_entry.term if len(parsed_entry.term) <= 50 else parsed_entry.term[:47] + '...'
                     
                     await message.add_reaction('✅')
                     logger.info(f"Successfully added entry: {parsed_entry.term}")
 
-                    # Update the bot's status to show the latest dictionary version and the new term
                     latest_version = dict_manager.find_latest_version()
-                    status_text = f"📖 {latest_version} - {truncated_term}"
+                    entries = dict_manager.get_all_entries(latest_version)
+                    word_number = len(entries)
+                    status_text = f"#{word_number}: {truncated_term}"
                     await bot.change_presence(activity=discord.CustomActivity(name=status_text))
 
                     # Remove the reaction after 4 seconds
