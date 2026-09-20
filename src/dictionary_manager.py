@@ -212,15 +212,29 @@ class DictionaryManager:
             logger.error(f"Failed to upload {filename}")
             return False
 
+    def _zoog_timestamp(self) -> str:
+        cdt = pytz.timezone('America/Chicago')
+        now = datetime.now(cdt)
+        return now.strftime("%B %d, %Y %I:%M %p CDT")
+
+    def _strip_zoog_header(self, content: str) -> str:
+        """Removes the existing 'ZOOGLIOGRAPHY - <timestamp>' header line
+        (and the blank line after it) if present, leaving just the body."""
+        return re.sub(r'^ZOOGLIOGRAPHY - .+\n\n?', '', content, count=1)
+
     def add_to_zoogliography(self, text: str) -> bool:
-        """Appends a line to the single "Zoogliography.txt" file in the repo,
+        """Appends a line to the single Zoogliography.txt file in the repo,
         creating it if it doesn't exist. Unlike the dictionary itself, this
-        file has no versioning -- it's just overwritten in place each time."""
+        file has no versioning -- it's just overwritten in place each time.
+        Keeps a dictionary-style header (title + last-updated timestamp)
+        at the top, refreshed on every change."""
         existing = self.github.get_file_content("Zoogliography.txt") or ""
-        existing = existing.rstrip("\n")
-        new_content = f"{existing}\n{text}" if existing else text
+        body = self._strip_zoog_header(existing).rstrip("\n")
+        new_body = f"{body}\n{text}" if body else text
+
+        new_content = f"ZOOGLIOGRAPHY - {self._zoog_timestamp()}\n\n{new_body}"
         commit_message = f"Add to Zoogliography: '{text[:60]}'"
-    
+
         success = self.github.create_or_update_file("Zoogliography.txt", new_content, commit_message)
         if success:
             logger.info(f"Added to Zoogliography: {text}")
@@ -236,7 +250,8 @@ class DictionaryManager:
         if not existing:
             return False
 
-        lines = existing.split("\n")
+        body = self._strip_zoog_header(existing)
+        lines = body.split("\n")
         target = text.strip().lower()
         new_lines = [line for line in lines if line.strip().lower() != target]
 
@@ -244,7 +259,8 @@ class DictionaryManager:
             logger.warning(f"'{text}' not found in Zoogliography, nothing removed")
             return False
 
-        new_content = "\n".join(new_lines).strip("\n")
+        new_body = "\n".join(new_lines).strip("\n")
+        new_content = f"ZOOGLIOGRAPHY - {self._zoog_timestamp()}\n\n{new_body}"
         commit_message = f"Remove from Zoogliography: '{text[:60]}'"
 
         success = self.github.create_or_update_file("Zoogliography.txt", new_content, commit_message)
@@ -253,7 +269,7 @@ class DictionaryManager:
         else:
             logger.error(f"Failed to remove from Zoogliography: {text}")
         return success
-
+        
     def _format_new_entry(self, term: str, pos: str, definition: str, pronunciation: Optional[str] = None,
                          ety_lines: Optional[List[str]] = None, example_lines: Optional[List[str]] = None,
                          additional_info: Optional[List[str]] = None) -> str:
