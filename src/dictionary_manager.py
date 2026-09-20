@@ -212,18 +212,16 @@ class DictionaryManager:
             logger.error(f"Failed to upload {filename}")
             return False
 
-    ZOOGLIOGRAPHY_FILENAME = "Zoogliography.txt"
-
     def add_to_zoogliography(self, text: str) -> bool:
-        """Appends a line to the single Zoogliography.txt file in the repo,
+        """Appends a line to the single "Zoogliography.txt" file in the repo,
         creating it if it doesn't exist. Unlike the dictionary itself, this
         file has no versioning -- it's just overwritten in place each time."""
-        existing = self.github.get_file_content(ZOOGLIOGRAPHY_FILENAME) or ""
+        existing = self.github.get_file_content("Zoogliography.txt") or ""
         existing = existing.rstrip("\n")
         new_content = f"{existing}\n{text}" if existing else text
         commit_message = f"Add to Zoogliography: '{text[:60]}'"
     
-        success = self.github.create_or_update_file(ZOOGLIOGRAPHY_FILENAME, new_content, commit_message)
+        success = self.github.create_or_update_file("Zoogliography.txt", new_content, commit_message)
         if success:
             logger.info(f"Added to Zoogliography: {text}")
         else:
