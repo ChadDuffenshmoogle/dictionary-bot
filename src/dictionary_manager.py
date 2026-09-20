@@ -178,31 +178,6 @@ class DictionaryManager:
         else:
             new_version = "v1.2.5"  # Fallback
 
-        # Add to corpus and sort - this is crucial for proper ordering
-        new_corpus = corpus + [term]
-        new_corpus = sorted(set(new_corpus), key=sort_key_ignore_punct)
-        
-        logger.info(f"Original corpus count: {len(corpus)}")
-        logger.info(f"New corpus count: {len(new_corpus)}")
-        logger.info(f"Added term '{term}' to corpus")
-        
-        # Debug: show where the term should be in the sorted list
-        term_position = None
-        for i, corpus_term in enumerate(new_corpus):
-            if corpus_term.lower() == term.lower():
-                term_position = i
-                break
-        
-        if term_position is not None:
-            logger.info(f"Term '{term}' is at position {term_position} in sorted corpus")
-            # Show surrounding terms for context
-            start = max(0, term_position - 3)
-            end = min(len(new_corpus), term_position + 4)
-            context = new_corpus[start:end]
-            logger.info(f"Context: {context}")
-        else:
-            logger.warning(f"Term '{term}' not found in new corpus!")
-
         # Create new entry with appropriate formatting
         new_entry_text = self._format_new_entry(term, pos, definition, pronunciation, ety_lines, example_lines, additional_info)
 
