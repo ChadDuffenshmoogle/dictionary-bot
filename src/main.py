@@ -37,6 +37,14 @@ IDLE_ACTIVITIES = {
         ('listening', 'The Alphabet Song'),
         ('listening', 'Word Crimes'),
         ('competing', 'the Scripps National Spelling Bee'),
+        ('reading', 'The Official Scrabble Players Dictionary, Seventh Edition'),
+        ('reading', "Merriam-Webster's Collegiate Dictionary (12th Edition)"),
+        ('reading', 'The Merriam-Webster Dictionary'),
+        ('reading', 'New Oxford American Dictionary'),
+        ('reading', 'Collins English Dictionary'),
+        ('reading', 'Linguistics for Dummies'),
+        ('reading', 'the Unicyclist Dictionary'),
+        ('reading', 'the Unicyclist Zoogliography'),
     ],
     'infrequent': [
         ('playing', 'Taboo'),
@@ -50,6 +58,7 @@ IDLE_ACTIVITIES = {
         ('watching', 'WordWorld'),
         ('watching', 'Password'),
         ('watching', 'The Professor and the Madman'),
+        ('reading', "Merriam-Webster's Pocket Dictionary"),
     ],
     'rare': [
         ('playing', 'Call of Duty: Black Ops 2'),
@@ -58,31 +67,53 @@ IDLE_ACTIVITIES = {
         ('playing', 'Tekken 8'),
         ('watching', 'John Wick'),
         ('watching', 'Breaking Bad'),
+        ('reading', 'How to Make Money Smartly and Epicly'),
     ],
 }
 CATEGORY_WEIGHTS = {'common': 79, 'infrequent': 20, 'rare': 1}
 
+IDLE_LABELS = {
+    'playing': '🎮 Playing',
+    'watching': '📺 Watching',
+    'listening': '🎵 Listening to',
+    'competing': '🏆 Competing in',
+    'reading': '📖 Reading',
+}
+
 def build_idle_activity():
-    kinds = {
-        'playing': lambda n: discord.Game(name=n),
-        'watching': lambda n: discord.Activity(type=discord.ActivityType.watching, name=n),
-        'listening': lambda n: discord.Activity(type=discord.ActivityType.listening, name=n),
-        'competing': lambda n: discord.Activity(type=discord.ActivityType.competing, name=n),
-    }
-    categories = list(CATEGORY_WEIGHTS.keys())
-    weights = list(CATEGORY_WEIGHTS.values())
-    category = random.choices(categories, weights=weights, k=1)[0]
+    category = random.choices(
+        list(CATEGORY_WEIGHTS.keys()),
+        weights=list(CATEGORY_WEIGHTS.values()),
+        k=1
+    )[0]
     kind, name = random.choice(IDLE_ACTIVITIES[category])
-    return kinds[kind](name)
+    label = f"{IDLE_LABELS[kind]} {name}"
+
+    # Reading has no real Discord activity type, so it's a plain custom status.
+    if kind == 'reading':
+        return discord.CustomActivity(name=label)
+
+    types = {
+        'playing': discord.ActivityType.playing,
+        'watching': discord.ActivityType.watching,
+        'listening': discord.ActivityType.listening,
+        'competing': discord.ActivityType.competing,
+    }
+    return discord.Activity(type=types[kind], name=label)
 
 # Tracks when a word was last successfully added, to know when to switch
 # to an idle activity. Resets on bot restart since it's in-memory only.
 last_word_time = datetime.utcnow()
+idle_active = False
 
 @tasks.loop(minutes=30)
 async def idle_status_checker():
+    global idle_active
+    if idle_active:
+        return
     if datetime.utcnow() - last_word_time >= timedelta(hours=12):
         await bot.change_presence(activity=build_idle_activity())
+        idle_active = True
 
 @bot.event
 async def on_ready():
@@ -262,8 +293,9 @@ async def on_message(message):
                 )
                 
                 if success:
-                    global last_word_time
+                    global last_word_time, idle_active
                     last_word_time = datetime.utcnow()
+                    idle_active = False
 
                     truncated_term = parsed_entry.term if len(parsed_entry.term) <= 50 else parsed_entry.term[:47] + '...'
                     
