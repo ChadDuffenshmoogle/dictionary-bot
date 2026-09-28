@@ -219,3 +219,40 @@ class GitHubAPI:
         except Exception as e:
             logger.error(f"Error deleting file {file_path}: {e}")
             return False
+
+    def list_commits(self, max_pages: int = 5) -> list:
+        """Lists recent commits on the branch, newest first (100 per page)."""
+        commits_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/commits"
+        all_commits = []
+        try:
+            for page in range(1, max_pages + 1):
+                response = requests.get(
+                    commits_url,
+                    headers=self.headers,
+                    params={"sha": GITHUB_BRANCH, "per_page": 100, "page": page},
+                    timeout=30
+                )
+                response.raise_for_status()
+                batch = response.json()
+                if not batch:
+                    break
+                all_commits.extend(batch)
+                if len(batch) < 100:
+                    break
+            logger.info(f"Retrieved {len(all_commits)} commits from GitHub")
+            return all_commits
+        except Exception as e:
+            logger.error(f"Error listing commits: {e}")
+            return []
+
+    def get_json_file(self, file_path: str, default: dict) -> dict:
+        """Reads a small JSON file from the repo, or returns default if missing."""
+        import json
+        content = self.get_file_content(file_path)
+        if content is None:
+            return default
+        try:
+            return json.loads(content)
+        except Exception as e:
+            logger.error(f"Could not parse {file_path}: {e}")
+            return default
