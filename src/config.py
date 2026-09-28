@@ -29,3 +29,7 @@ FILE_EXTENSION = ".txt"
 
 # Regex Pattern
 ENTRY_PATTERN = r'^(.+?) \((.+?)\) - (.+)$'
+
+# Streak Nudge Configuration
+NUDGE_CHANNEL_ID = 1230001194785701939 #Unicyclist dictionary channel id
+NUDGE_STATE_FILE = "nudge_state.json"  # saved in the GitHub repo so it survives restarts
