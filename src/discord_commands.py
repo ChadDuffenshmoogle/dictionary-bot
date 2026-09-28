@@ -321,6 +321,15 @@ zoog:
 ```"""
         await ctx.send(help_msg)
 
+    @commands.command(name='nudge', hidden=True)
+    async def toggle_nudge(self, ctx: commands.Context):
+        """Turns the daily streak nudge on or off."""
+        from .main import load_nudge_state, save_nudge_state
+        state = load_nudge_state()
+        state["enabled"] = not state.get("enabled", True)
+        save_nudge_state(state)
+        await ctx.send(f"🔔 Streak nudges are now {'ON' if state['enabled'] else 'OFF'}.")
+
     @commands.command(name='debug')
     async def debug_bot(self, ctx: commands.Context):
         """Debug command to check bot connectivity and GitHub access."""
