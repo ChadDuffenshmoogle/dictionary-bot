@@ -76,19 +76,40 @@ CATEGORY_WEIGHTS = {'common': 79, 'infrequent': 20, 'rare': 1}
 
 NUDGE_MESSAGES = {
     'common': [
-        "Placeholder common message: your {days}-day streak is on the line tonight!",
-        "Placeholder common message: {days} days in a row, don't stop now!",
-        "Placeholder common message: no word yet today, and the {days}-day streak needs one.",
+        "The {days}-day word streak is on the line tonight! Add one! ✍️",
+        "{days} days of words in a row, don't stop now! ",
+        "No word yet today. 🤔 and the {days}-day streak needs one.",
+        "🗣️ Define whatever new word comes to mind to keep the {days}-day streak!",
+        "{days} days! {days} DAYS!! That's so many consecutive word-coining days. Add to it, add to it!",
+        "{days} 📅. 🤔💭👀🧐🫵✍️📄❔🙏😊⁉️",
+        "{days} days of continous wordage? I can't even count that high. Keep going!! 🙌🗣️",
     ],
     'infrequent': [
-        "Placeholder infrequent message: {days} days strong, one word saves it!",
-        "Placeholder infrequent message: the dictionary misses you, {days}-day streak at stake.",
+        "😰 It’s getting pretty late... I fear the cold, blank pages from a word uncoined. 🥶 Add a word now to extend the {days}-day streak!",
+        "Hi, it’s the dictionary! I missed you. Coin something, please! {days} days and counting!",
+        "Word word word word word word word word word word word word. Oh how I love them. Could you add one to advance the {days}-day streak.",
+        "Oh I get it. You just, don't like coining words. Who needs a {days}-day streak? Well then DON'T coin a word. See if I care!!.                                                                (i didn't mean it. please... drop some hip slang or something.)",
     ],
     'rare': [
-        "Placeholder rare message: legendary {days}-day streak, keep it alive!",
+        "I sit upon an inert, dust-ridden shelf of great tomes. The great works of Homer, Shakespeare, Dostoevsky, and Sullivan surround me. These I aspire to, to enlighten the mind and uplift the human person. Yet, how can I? With pages incomplete, I wrestle with quandaries no book has dealt with since the composition books of yore. My feeble message cries out. My message in a bottle crosses the horizon. Suddenly, it seems to be heard. Green circles appear beside profile images. Glorious Unicyclists... Gilbertians, Nooptoners, the lot of you! Heed my... simple request. Oh please oh please oh please oh please add a new word! Th-The {days}-day streak!!! Ah- I- You don't wanna forget... do you?? 🥺🥺🥺 Pwetty pweese?? Oh here come the waterworks AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA oh my pages! They sog!! Oh, catch me as I faint. How dare you allow this? You just don't care I guess! Well fine. Be like that! I never wanted defintions anyway. Oh what am I saying? Get a hold of yourself Unicyclist Dictionary!! Ah now where was I... oh um, yes. Could you... coin a word? Thx. 🤙",
     ],
 }
 NUDGE_CATEGORY_WEIGHTS = {'common': 79, 'infrequent': 20, 'rare': 1}
+
+DRY_SPELL_DAYS = 10
+DRY_SPELL_MESSAGES = {
+    'common': [
+        "Are you guys neglecting me, the poor Cyclcexicon? 😔 It's been {days} days since the last word!",
+        "{days} days without a new word feels like an eternity. 🕰️",
+        "It has been {days} days. It’s not too late to come back and coin a word today!",
+    ],
+    'infrequent': [
+        "{days} days of NO new words. Where are the cycsmiths among us?! 😭🙏",
+    ],
+    'rare': [
+        "{days} days of wordlessness!? You leave me no choice! *breathes in* ... FDAKJHFJDKASHFKJDAHFJKAHFJAKHFKJADHFJKAFHJKDAHFJKAHFKJDHFKJDHFJKDFHKJDHFJDKHFKJDHSAJFKAHJKFDHAJKFHDJAKHFJDKAHFJDKAHFJKDFHJKAHJKHJKHJKHJKHJHJKHKJHJKHJKHJKHJKHJKHKJHJKHKJHJKHJKHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH!!!!! :AlexDead:",
+    ],
+}
 
 IDLE_LABELS = {
     'playing': '🎮 Playing',
@@ -161,13 +182,22 @@ def compute_active_streak(word_days):
         day -= timedelta(days=1)
     return streak
 
-def build_nudge_message(days):
+def days_since_last_word(word_days):
+    """Days since the most recent word was added (Central time), or None if never."""
+    if not word_days:
+        return None
+    last_day = datetime.strptime(max(word_days), "%Y-%m-%d").date()
+    return (datetime.now(CENTRAL).date() - last_day).days
+
+def build_nudge_message(days, pool=None):
+    if pool is None:
+        pool = NUDGE_MESSAGES
     category = random.choices(
         list(NUDGE_CATEGORY_WEIGHTS.keys()),
         weights=list(NUDGE_CATEGORY_WEIGHTS.values()),
         k=1
     )[0]
-    return random.choice(NUDGE_MESSAGES[category]).format(days=days)
+    return random.choice(pool[category]).format(days=days)
 
 def load_nudge_state():
     return github_api.get_json_file(
@@ -195,13 +225,25 @@ async def streak_nudge():
     if today_str in word_days:
         return  # a word was already added today
 
-    streak = compute_active_streak(word_days)
-    if streak < 1:
-        return
-
     channel = bot.get_channel(NUDGE_CHANNEL_ID)
     if channel is None:
         logger.error(f"Nudge channel {NUDGE_CHANNEL_ID} not found")
+        return
+
+    # Dry spell: 10+ days with no words. Sent once per dry spell.
+    gap = days_since_last_word(word_days)
+    if gap is not None and gap >= DRY_SPELL_DAYS:
+        last_word_day = max(word_days)
+        if state.get("last_dry_spell_word_day") == last_word_day:
+            return  # already sent the dry-spell message for this gap
+        state["last_nudge_date"] = today_str
+        state["last_dry_spell_word_day"] = last_word_day
+        save_nudge_state(state)
+        await channel.send(build_nudge_message(gap, DRY_SPELL_MESSAGES))
+        return
+
+    streak = compute_active_streak(word_days)
+    if streak < 1:
         return
 
     # Save the "sent today" marker first so a double fire can't duplicate.
