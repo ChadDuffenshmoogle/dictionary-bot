@@ -6,11 +6,13 @@ import re
 import asyncio
 from discord.ext import commands
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
+from zoneinfo import ZoneInfo
+import json
 from discord.ext import tasks
 
 # Import modules from our new modular structure
-from .config import DISCORD_TOKEN, logger, ENTRY_PATTERN
+from .config import DISCORD_TOKEN, logger, ENTRY_PATTERN, NUDGE_CHANNEL_ID, NUDGE_STATE_FILE
 from .github_api import GitHubAPI
 from .dictionary_manager import DictionaryManager
 from .discord_commands import DictionaryCommands
@@ -72,6 +74,22 @@ IDLE_ACTIVITIES = {
 }
 CATEGORY_WEIGHTS = {'common': 79, 'infrequent': 20, 'rare': 1}
 
+NUDGE_MESSAGES = {
+    'common': [
+        "Placeholder common message: your {days}-day streak is on the line tonight!",
+        "Placeholder common message: {days} days in a row, don't stop now!",
+        "Placeholder common message: no word yet today, and the {days}-day streak needs one.",
+    ],
+    'infrequent': [
+        "Placeholder infrequent message: {days} days strong, one word saves it!",
+        "Placeholder infrequent message: the dictionary misses you, {days}-day streak at stake.",
+    ],
+    'rare': [
+        "Placeholder rare message: legendary {days}-day streak, keep it alive!",
+    ],
+}
+NUDGE_CATEGORY_WEIGHTS = {'common': 79, 'infrequent': 20, 'rare': 1}
+
 IDLE_LABELS = {
     'playing': '🎮 Playing',
     'watching': '📺 Watching',
@@ -115,6 +133,82 @@ async def idle_status_checker():
         await bot.change_presence(activity=build_idle_activity())
         idle_active = True
 
+# ---------------- Streak nudge ----------------
+
+CENTRAL = ZoneInfo("America/Chicago")
+ADD_TERM_RE = re.compile(r"with new term '(.+?)'")
+
+def to_central_date(iso_timestamp):
+    """GitHub timestamps are UTC. Convert to Central before taking the date."""
+    dt = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
+    return dt.astimezone(CENTRAL).strftime("%Y-%m-%d")
+
+def get_word_days():
+    """Returns the set of Central dates (YYYY-MM-DD) that had a word added."""
+    days = set()
+    for c in github_api.list_commits():
+        if ADD_TERM_RE.search(c["commit"]["message"]):
+            days.add(to_central_date(c["commit"]["author"]["date"]))
+    return days
+
+def compute_active_streak(word_days):
+    """Counts consecutive days ending yesterday (Central) with a word added."""
+    today = datetime.now(CENTRAL).date()
+    day = today - timedelta(days=1)
+    streak = 0
+    while day.strftime("%Y-%m-%d") in word_days:
+        streak += 1
+        day -= timedelta(days=1)
+    return streak
+
+def build_nudge_message(days):
+    category = random.choices(
+        list(NUDGE_CATEGORY_WEIGHTS.keys()),
+        weights=list(NUDGE_CATEGORY_WEIGHTS.values()),
+        k=1
+    )[0]
+    return random.choice(NUDGE_MESSAGES[category]).format(days=days)
+
+def load_nudge_state():
+    return github_api.get_json_file(
+        NUDGE_STATE_FILE, {"enabled": True, "last_nudge_date": None}
+    )
+
+def save_nudge_state(state):
+    return github_api.create_or_update_file(
+        NUDGE_STATE_FILE,
+        json.dumps(state, indent=2),
+        "Update nudge state"
+    )
+
+@tasks.loop(time=time(hour=22, minute=0, tzinfo=CENTRAL))
+async def streak_nudge():
+    state = load_nudge_state()
+    if not state.get("enabled", True):
+        return
+
+    today_str = datetime.now(CENTRAL).strftime("%Y-%m-%d")
+    if state.get("last_nudge_date") == today_str:
+        return  # already nudged today (restart or double fire)
+
+    word_days = get_word_days()
+    if today_str in word_days:
+        return  # a word was already added today
+
+    streak = compute_active_streak(word_days)
+    if streak < 1:
+        return
+
+    channel = bot.get_channel(NUDGE_CHANNEL_ID)
+    if channel is None:
+        logger.error(f"Nudge channel {NUDGE_CHANNEL_ID} not found")
+        return
+
+    # Save the "sent today" marker first so a double fire can't duplicate.
+    state["last_nudge_date"] = today_str
+    save_nudge_state(state)
+    await channel.send(build_nudge_message(streak))
+
 @bot.event
 async def on_ready():
     logger.info(f'Logged in as {bot.user}')
@@ -154,6 +248,9 @@ async def on_ready():
 
     if not idle_status_checker.is_running():
         idle_status_checker.start()
+
+    if not streak_nudge.is_running():
+        streak_nudge.start()
 
     # Find a suitable channel to send a welcome message
     welcome_sent = False
