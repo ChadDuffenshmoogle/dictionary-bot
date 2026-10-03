@@ -390,6 +390,7 @@ async def on_message(message):
         r'\([^)]*\)\s*-',  # (pos) - definition pattern
         r'\w+\s*\([^)]*\)\s*-\s*.+',  # word (pos) - definition
         r'Etymology:\s*',  # Etymology section
+        r'Pron(unciation)?:\s*',  # Pronunciation line
         r'Ex:\s*',  # Examples
         r'/[^/]+/',  # Phonetic notation
         r'\(pronounced:'  # Pronunciation notes
@@ -410,25 +411,13 @@ async def on_message(message):
             logger.info(f"Successfully parsed entry: {parsed_entry.term} ({parsed_entry.pos})")
             
             try:
-                # Prepare data for the dictionary manager
-                ety_lines = [parsed_entry.etymology] if parsed_entry.etymology else None
-                examples = parsed_entry.examples if parsed_entry.examples else None
-                additional = parsed_entry.additional_info if parsed_entry.additional_info else None
-                
-                # Handle derived terms as additional info
-                if parsed_entry.derived_terms:
-                    if not additional:
-                        additional = []
-                    additional.append(f"Derived Terms: {parsed_entry.derived_terms}")
-                
                 success = dict_manager.add_entry(
-                    parsed_entry.term, 
-                    parsed_entry.pos, 
+                    parsed_entry.term,
+                    parsed_entry.pos,
                     parsed_entry.definition,
-                    ety_lines=ety_lines,
-                    example_lines=examples,
                     pronunciation=parsed_entry.pronunciation,
-                    additional_info=additional
+                    etymology=parsed_entry.etymology,
+                    sections=parsed_entry.sections
                 )
                 
                 if success:
@@ -466,7 +455,7 @@ async def on_message(message):
             logger.info("Message had definition indicators but couldn't be parsed as entry")
             # Maybe send a helpful message about format if it really looks like they're trying
             if re.search(r'\([^)]*\)\s*-', content):
-                await message.channel.send("📝 I detected what looks like a dictionary entry, but couldn't parse it. Make sure it follows the format: `word (pos) - definition`")
+                await message.channel.send("📝 I detected what looks like a dictionary entry, but couldn't parse it. Make sure it follows the format: `word (pos) - definition` (extras: `+ another meaning`, `Ex: example`, `(v.) - other part of speech`, `Etymology: ...`, `Pron: /.../`)")
 
     # Process commands if the message is not an entry
     await bot.process_commands(message)
