@@ -82,18 +82,15 @@ class DictionaryManager:
         return f"{FILE_PREFIX} {version}{FILE_EXTENSION}"
 
     def get_dictionary_content(self, version: str) -> Optional[str]:
-        """Gets dictionary content from GitHub (with caching)."""
+        """Gets the live dictionary content from GitHub (never cached)."""
         filename = self.get_filename(version)
         logger.info(f"Attempting to get content for: {filename}")
 
-        if filename in self._cache:
-            logger.info(f"Using cached content for {filename}")
-            return self._cache[filename]
-
+        # Always read the live file: the wiki editor can change it at any time,
+        # so a remembered copy would be out of date.
         content = self.github.get_file_content(filename)
         if content:
-            self._cache[filename] = content
-            logger.info(f"Successfully retrieved and cached content for {filename}")
+            logger.info(f"Successfully retrieved content for {filename}")
         else:
             logger.warning(f"Failed to retrieve content for {filename}")
 
