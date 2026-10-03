@@ -5,7 +5,7 @@ import pytz
 from datetime import datetime
 from typing import Optional, List
 from .github_api import GitHubAPI
-from .dictionary_parser import DictionaryEntry, parse_dictionary_entries, sort_key_ignore_punct
+from .dictionary_parser import DictionaryEntry, parse_dictionary_entries, sort_key_ignore_punct, format_entry
 from .config import BASE_VERSION, FILE_PREFIX, FILE_EXTENSION, logger, ENTRY_PATTERN
 
 class DictionaryManager:
@@ -108,7 +108,8 @@ class DictionaryManager:
 
     def add_entry(self, term: str, pos: str, definition: str, ety_lines: Optional[List[str]] = None, 
                   example_lines: Optional[List[str]] = None, pronunciation: Optional[str] = None, 
-                  additional_info: Optional[List[str]] = None) -> bool:
+                  additional_info: Optional[List[str]] = None, sections: Optional[List[dict]] = None,
+                  etymology: Optional[str] = None) -> bool:
         """Adds a new entry by preserving all original formatting and adding entry in alphabetical order."""
         cdt = pytz.timezone('America/Chicago')
         now = datetime.now(cdt)
@@ -141,7 +142,11 @@ class DictionaryManager:
             new_version = "v1.2.5"  # Fallback
 
         # Create new entry with appropriate formatting
-        new_entry_text = self._format_new_entry(term, pos, definition, pronunciation, ety_lines, example_lines, additional_info)
+        if sections is None:
+            sections = [{"pos": pos, "defs": [{"text": definition, "example": (example_lines or [""])[0]}]}]
+        if etymology is None and ety_lines:
+            etymology = " ".join(l.strip() for l in ety_lines if l.strip())
+        new_entry_text = self._format_new_entry(term, sections, etymology, pronunciation)
 
         # Split content at the dictionary proper boundary
         if "-----DICTIONARY PROPER-----" in latest_content:
@@ -238,60 +243,10 @@ class DictionaryManager:
             logger.error(f"Failed to remove from Zoogliography: {text}")
         return success
         
-    def _format_new_entry(self, term: str, pos: str, definition: str, pronunciation: Optional[str] = None,
-                         ety_lines: Optional[List[str]] = None, example_lines: Optional[List[str]] = None,
-                         additional_info: Optional[List[str]] = None) -> str:
-        """Format a new entry based on the dictionary style."""
-        
-        # Check if this should be a complex entry (has etymology, examples, or additional info)
-        needs_complex_format = (ety_lines and any(ety_lines)) or (example_lines and any(example_lines)) or (additional_info and any(additional_info))
-        
-        if needs_complex_format:
-            # Use hyphen-separated format for complex entries
-            result = "---------------------------------------------\n"
-            
-            # Add etymology first if present
-            if ety_lines:
-                for ety_line in ety_lines:
-                    if ety_line.strip():
-                        if not ety_line.strip().startswith('Etymology:'):
-                            result += f"Etymology: {ety_line.strip()}\n"
-                        else:
-                            result += f"{ety_line.strip()}\n"
-                result += "\n"
-            
-            # Main entry line
-            main_line = term
-            if pronunciation:
-                main_line += f" {pronunciation}"
-            main_line += f" ({pos}) - {definition}"
-            result += main_line
-            
-            # Add additional info
-            if additional_info:
-                for info in additional_info:
-                    if info.strip():
-                        result += f"\n{info.strip()}"
-            
-            # Add examples
-            if example_lines:
-                for example in example_lines:
-                    if example.strip():
-                        if not example.strip().startswith(('Ex:', 'Example:')):
-                            result += f"\n- Example: {example.strip()}"
-                        else:
-                            result += f"\n- {example.strip()}"
-            
-            result += "\n---------------------------------------------"
-            
-        else:
-            # Simple inline format
-            result = term
-            if pronunciation:
-                result += f" {pronunciation}"
-            result += f" ({pos}) - {definition}"
-        
-        return result
+    def _format_new_entry(self, term: str, sections: List[dict], etymology: Optional[str] = None,
+                          pronunciation: Optional[str] = None) -> str:
+        """One line for a plain entry, a hyphen block for anything richer."""
+        return format_entry(term, sections, etymology, pronunciation)
 
     def _update_header(self, header_part: str, new_version: str, timestamp: str) -> str:
         """Update the header with the new version and timestamp."""
@@ -334,7 +289,8 @@ class DictionaryManager:
                     
                     # Look for the main entry line
                     if (not block_term and inner_line and 
-                        not inner_line.startswith(('Etymology:', 'Ex:', 'Example:', '- ', 'Derived Terms:', 'Notes:'))):
+                        not inner_line.startswith(('Etymology:', 'Ex:', 'Example:', '- ', 'Derived Terms:', 'Notes:', 'Pronunciation:')) and
+                        not re.match(r'^\d+\.\s', inner_line)):
                         term = self._extract_term_from_line(inner_line)
                         if term:
                             block_term = term
