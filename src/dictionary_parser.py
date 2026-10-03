@@ -43,15 +43,22 @@ def _one_line(text: str) -> str:
 #       Pronunciation: /.../
 #
 # `sections` is a list like:
-#   [{"pos": "n.", "defs": [{"text": "...", "example": "..."}]}]
+#   [{"pos": "n.", "defs": [{"text": "...", "examples": ["...", "..."]}]}]
 # ---------------------------------------------------------------------------
 def format_entry(term: str, sections: List[Dict], etymology: Optional[str] = None,
                  pronunciation: Optional[str] = None) -> str:
     term = _one_line(term)
     secs = []
     for s in sections:
-        defs = [{"text": _one_line(d.get("text", "")), "example": _one_line(d.get("example", ""))}
-                for d in s.get("defs", []) if _one_line(d.get("text", ""))]
+        defs = []
+        for d in s.get("defs", []):
+            if not _one_line(d.get("text", "")):
+                continue
+            exs = list(d.get("examples") or [])
+            if d.get("example"):          # older single-example key
+                exs.append(d["example"])
+            defs.append({"text": _one_line(d["text"]),
+                         "examples": [_one_line(x) for x in exs if _one_line(x)]})
         if defs:
             secs.append({"pos": _one_line(s.get("pos", "")) or "n.", "defs": defs})
     etymology = _one_line(etymology or "")
@@ -60,7 +67,7 @@ def format_entry(term: str, sections: List[Dict], etymology: Optional[str] = Non
         pron = f"/{pron.strip('/')}/"
 
     if (len(secs) == 1 and len(secs[0]["defs"]) == 1
-            and not secs[0]["defs"][0]["example"] and not etymology and not pron):
+            and not secs[0]["defs"][0]["examples"] and not etymology and not pron):
         return f"{term} ({secs[0]['pos']}) - {secs[0]['defs'][0]['text']}"
 
     lines = [DIVIDER]
@@ -71,8 +78,8 @@ def format_entry(term: str, sections: List[Dict], etymology: Optional[str] = Non
                 lines.append(f"{term} ({s['pos']}) - {'1. ' if numbered else ''}{d['text']}")
             else:
                 lines.append(f"{i + 1}. {d['text']}")
-            if d["example"]:
-                lines.append(f"- Example: {d['example']}")
+            for ex in d["examples"]:
+                lines.append(f"- Example: {ex}")
     if etymology:
         lines.append(f"Etymology: {etymology}")
     if pron:
@@ -98,7 +105,7 @@ class DictionaryEntry:
         self.additional_info = additional_info or []
         self.derived_terms = derived_terms
         self.original_block = original_block
-        self.sections = sections or [{"pos": pos, "defs": [{"text": definition, "example": ""}]}]
+        self.sections = sections or [{"pos": pos, "defs": [{"text": definition, "examples": []}]}]
 
     def to_string(self) -> str:
         if self.original_block:
@@ -201,7 +208,7 @@ def count_dictionary_entries(content: str) -> int:
 #
 #   word /ipa/ (n.) - first meaning          <- first line (pronunciation optional)
 #   + another meaning of the same part of speech      (or "2. another meaning")
-#   Ex: an example sentence for the meaning just above it
+#   Ex: an example sentence for the meaning just above it (use several Ex: lines for several examples)
 #   (v.) - a meaning as a different part of speech    (starts a new section)
 #   Etymology: where the word came from
 #   Pron: /ipa/
@@ -228,7 +235,7 @@ def parse_message_as_entry(content: str) -> Optional[DictionaryEntry]:
         m = re.match(r'^(?:-\s*)?(?:examples?|ex):\s*(.*)$', line, re.IGNORECASE)
         if m:
             if sense is not None:
-                sense["example"] = (sense["example"] + "; " if sense["example"] else "") + m.group(1).strip()
+                sense["examples"].append(m.group(1).strip())
                 last = 'ex'
             continue
 
@@ -245,33 +252,33 @@ def parse_message_as_entry(content: str) -> Optional[DictionaryEntry]:
                 pronunciation = f"/{pm.group(1)}/"
             term = _clean_term(raw_term)
             cur = {"pos": pos.strip(), "defs": []}
-            sense = {"text": definition.strip(), "example": ""}
+            sense = {"text": definition.strip(), "examples": []}
             cur["defs"].append(sense); sections.append(cur); last = 'def'
             continue
 
         m = re.match(r'^\(([^()]+)\)\s*-\s*(.+)$', line)
         if m:
             cur = {"pos": m.group(1).strip(), "defs": []}
-            sense = {"text": m.group(2).strip(), "example": ""}
+            sense = {"text": m.group(2).strip(), "examples": []}
             cur["defs"].append(sense); sections.append(cur); last = 'def'
             continue
         m = re.match(ENTRY_PATTERN, line)
         if m and _clean_term(m.group(1)).lower() == term.lower():
             cur = {"pos": m.group(2).strip(), "defs": []}
-            sense = {"text": m.group(3).strip(), "example": ""}
+            sense = {"text": m.group(3).strip(), "examples": []}
             cur["defs"].append(sense); sections.append(cur); last = 'def'
             continue
         m = re.match(r'^(?:\+|\d+[.)])\s+(.+)$', line)
         if m and cur is not None:
-            sense = {"text": m.group(1).strip(), "example": ""}
+            sense = {"text": m.group(1).strip(), "examples": []}
             cur["defs"].append(sense); last = 'def'
             continue
 
         # Anything else continues whatever came just before it.
         if last == 'ety' and etymology:
             etymology[-1] += " " + line
-        elif last == 'ex' and sense is not None:
-            sense["example"] += " " + line
+        elif last == 'ex' and sense is not None and sense["examples"]:
+            sense["examples"][-1] += " " + line
         elif sense is not None:
             sense["text"] += " " + line
 
