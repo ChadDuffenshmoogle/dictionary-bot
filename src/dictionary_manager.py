@@ -197,11 +197,19 @@ class DictionaryManager:
         existing = self.github.get_file_content("Zoogliography.txt") or ""
         body = self._strip_zoog_header(existing).strip("\n")
 
+        # Keep the "Predicted Next Word" section (written by the stats
+        # script) separate: sort only the lines above it, then put it back.
+        marker = "--- Predicted Next Word ---"
+        body, found, predicted = body.partition(marker)
+        body = body.strip("\n")
+
         lines = [line for line in body.split("\n") if line.strip()] if body else []
         lines.append(text)
         lines = sorted(set(lines), key=sort_key_ignore_punct)
 
         new_body = "\n".join(lines)
+        if found:
+            new_body += f"\n\n{marker}{predicted}"
         new_content = f"ZOOGLIOGRAPHY - {self._zoog_timestamp()}\n\n{new_body}"
         commit_message = f"Add to Zoogliography: '{text[:60]}'"
 
