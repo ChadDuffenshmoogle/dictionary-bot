@@ -220,7 +220,7 @@ class GitHubAPI:
             logger.error(f"Error deleting file {file_path}: {e}")
             return False
 
-    def list_commits(self, max_pages: int = 5) -> list:
+    def list_commits(self, max_pages: int = 100) -> list:
         """Lists recent commits on the branch, newest first (100 per page)."""
         commits_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/commits"
         all_commits = []
