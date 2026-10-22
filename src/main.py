@@ -455,7 +455,7 @@ async def on_message(message):
             logger.info("Message had definition indicators but couldn't be parsed as entry")
             # Maybe send a helpful message about format if it really looks like they're trying
             if re.search(r'\([^)]*\)\s*-', content):
-                await message.channel.send("📝 I detected what looks like a dictionary entry, but couldn't parse it. Make sure it follows the format: `word (pos) - definition` (extras: `+ another meaning`, `Ex: example`, `(v.) - other part of speech`, `Etymology: ...`, `Pron: /.../`)")
+                await message.channel.send("📝 I detected what looks like a dictionary entry, but couldn't parse it. Make sure it follows the format: `word (pos) - definition` (extras: `+ another meaning`, `Ex: example`, `(v.) - other part of speech`, `Etymology: ...`, `Pron: ...`). You will have to re-send the message rather than edit it.")
 
     # Process commands if the message is not an entry
     await bot.process_commands(message)
