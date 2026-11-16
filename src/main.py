@@ -1,4 +1,5 @@
 # src/main.py
+# Bot entry point: Discord client setup, on_message entry/zoog parsing, status rotation, and the daily streak-nudge task.
 
 import os
 import discord
