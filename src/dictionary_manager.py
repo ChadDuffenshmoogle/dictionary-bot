@@ -1,4 +1,5 @@
 # src/dictionary_manager.py
+# Reads, adds, and removes dictionary entries and Zoogliography lines in the GitHub repo via GitHubAPI, handling versioning and sorting.
 
 import re
 import pytz
@@ -264,6 +265,15 @@ class DictionaryManager:
             logger.error(f"Failed to remove from Zoogliography: {text}")
         return success
         
+    def get_zoogs(self) -> List[str]:
+        """Returns the Zoogliography lines, excluding the header and the
+        'Predicted Next Word' section."""
+        existing = self.github.get_file_content("Zoogliography.txt")
+        if not existing:
+            return []
+        body = self._strip_zoog_header(existing).split("--- Predicted Next Word ---", 1)[0]
+        return [line.strip() for line in body.split("\n") if line.strip()]
+
     def _format_new_entry(self, term: str, sections: List[dict], etymology: Optional[str] = None,
                           pronunciation: Optional[str] = None) -> str:
         """One line for a plain entry, a hyphen block for anything richer."""
