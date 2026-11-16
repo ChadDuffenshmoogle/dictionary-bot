@@ -1,4 +1,5 @@
 # src/discord_commands.py
+# Discord commands cog: dictionary lookup, stats, charts, random entries/zoogs, streak, and help, backed by DictionaryManager.
 
 import discord
 import os
@@ -82,8 +83,16 @@ class DictionaryCommands(commands.Cog):
         await ctx.send(stats_msg)
 
     @commands.command(name='random')
-    async def show_random_entry(self, ctx: commands.Context):
-        """Displays a random dictionary entry."""
+    async def show_random_entry(self, ctx: commands.Context, arg: str = ""):
+        """Displays a random dictionary entry, or a random zoog with `!random zoog`."""
+        if arg.strip().lower() == "zoog":
+            zoogs = self.dict_manager.get_zoogs()
+            if not zoogs:
+                await ctx.send("No zoogs found in the Zoogliography.")
+                return
+            await ctx.send(f"🎲 {random.choice(zoogs)}")
+            return
+
         latest = self.dict_manager.find_latest_version()
         entries = self.dict_manager.get_all_entries(latest)
 
@@ -101,6 +110,23 @@ class DictionaryCommands(commands.Cog):
             result = '\n'.join(clean_lines).strip()
 
         await ctx.send(f"{result}")
+
+    @commands.command(name='streak')
+    async def show_streak(self, ctx: commands.Context):
+        """Shows the current consecutive-day word streak (Central time)."""
+        from .main import get_word_days, compute_active_streak, CENTRAL
+        word_days = get_word_days()
+        streak = compute_active_streak(word_days)  # counts days ending yesterday
+        today_str = datetime.now(CENTRAL).strftime("%Y-%m-%d")
+        added_today = today_str in word_days
+        if added_today:
+            streak += 1
+
+        if streak < 1:
+            await ctx.send("🔥 No active streak. Add a word today to start one!")
+        else:
+            status = "a word was added today" if added_today else "no word yet today"
+            await ctx.send(f"🔥 Current streak: **{streak}** day{'s' if streak != 1 else ''} ({status}).")
 
     @commands.command(name='search')
     async def search_entries(self, ctx: commands.Context, *, query: str):
@@ -293,6 +319,8 @@ Statistics and data viz: https://chadduffenshmoogle.github.io/dictionary-version
 `!getversion [version]` - Download a specific version or latest (default)
 `!stats` - Show dictionary statistics
 `!random` - Show a random dictionary entry
+`!random zoog` - Show a random zoog
+`!streak` - Show the current word streak
 `!search <query>` - Search for terms containing the query
 `!search -d <query>` - Search definitions only
 `!search -a <query>` - Search both terms and definitions
@@ -318,7 +346,9 @@ word (v) - definition
 **Undefined word storage:**
 ```
 zoog: 
-```"""
+dezoog: 
+```
+Join related zoogs with ` / `. `dezoog:` removes one piece, or the whole line if all are given."""
         await ctx.send(help_msg)
 
     @commands.command(name='nudge', hidden=True)
