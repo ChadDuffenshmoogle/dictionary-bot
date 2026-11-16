@@ -231,9 +231,25 @@ class DictionaryManager:
         body = self._strip_zoog_header(existing)
         lines = body.split("\n")
         target = text.strip().lower()
-        new_lines = [line for line in lines if line.strip().lower() != target]
+        new_lines = []
+        changed = False
+        for line in lines:
+            if line.strip().lower() == target:
+                # Whole line matches: remove the entire line
+                changed = True
+                continue
+            if "/" in line:
+                # Slash-joined zoog: remove only the matching piece
+                parts = [p.strip() for p in line.split("/")]
+                kept = [p for p in parts if p.lower() != target]
+                if len(kept) < len(parts):
+                    changed = True
+                    if kept:
+                        new_lines.append(" / ".join(kept))
+                    continue
+            new_lines.append(line)
 
-        if len(new_lines) == len(lines):
+        if not changed:
             logger.warning(f"'{text}' not found in Zoogliography, nothing removed")
             return False
 
