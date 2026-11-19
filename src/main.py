@@ -60,6 +60,7 @@ IDLE_ACTIVITIES = {
         ('playing', 'Scattergories'),
         ('watching', 'WordWorld'),
         ('watching', 'Password'),
+        ('watching', 'La ruota della fortuna'),
         ('watching', 'The Professor and the Madman'),
         ('reading', "Merriam-Webster's Pocket Dictionary"),
     ],
