@@ -1,4 +1,10 @@
 # src/dictionary_parser.py
+# Parses and formats dictionary entries: reads the dictionary file, turns Discord messages into entries, and writes entries back out.
+# Related files (what this file needs for certain things):
+# - src/config.py: logger and ENTRY_PATTERN (the pattern that recognizes a "term (pos) - definition" line).
+# - src/main.py: calls parse_message_as_entry when someone posts a new word in Discord.
+# - src/discord_commands.py: calls count_dictionary_entries for !stats and related commands.
+# - src/dictionary_manager.py: likely uses DictionaryEntry, format_entry, and the term helpers to add and look up entries (not verified).
 import re
 from typing import List, Optional, Dict
 from .config import logger, ENTRY_PATTERN
