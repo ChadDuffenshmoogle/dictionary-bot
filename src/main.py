@@ -1,5 +1,12 @@
 # src/main.py
 # Bot entry point: Discord client setup, on_message entry/zoog parsing, status rotation, and the daily streak-nudge task.
+# Related files (what this file needs for certain things):
+# - src/config.py: tokens, channel IDs, ENTRY_PATTERN, nudge settings, logger.
+# - src/github_api.py: reading/writing files and commits on GitHub (streak, nudge state).
+# - src/dictionary_manager.py: add_entry, add_to_zoogliography, remove_from_zoogliography (the zoog: / dezoog: commands).
+# - src/dictionary_parser.py: parse_message_as_entry (turns a message into a dictionary entry).
+# - src/discord_commands.py: the ! commands (!stats, !random, !streak, !help), which also import helpers from this file.
+# - Autozoog rejection: not handled in this file, so check the file that creates autozoogs.
 
 import os
 import discord
