@@ -1,5 +1,12 @@
 # src/dictionary_manager.py
 # Reads, adds, and removes dictionary entries and Zoogliography lines in the GitHub repo via GitHubAPI, handling versioning and sorting.
+# Related files (what this file needs for certain things):
+# - src/github_api.py: all reading and writing of files on GitHub (get_file_content, create_or_update_file, list_dictionary_files).
+# - src/dictionary_parser.py: DictionaryEntry, parse_dictionary_entries, sort_key_ignore_punct, and format_entry (reading, sorting, and writing entries).
+# - src/config.py: BASE_VERSION, FILE_PREFIX, FILE_EXTENSION, logger, ENTRY_PATTERN.
+# - src/main.py: calls add_entry, add_to_zoogliography (zoog:), and remove_from_zoogliography (dezoog:).
+# - src/discord_commands.py: calls get_zoogs (!random zoog), find_latest_version, and get_all_entries.
+# - Stats script (not uploaded): writes the "--- Predicted Next Word ---" section of Zoogliography.txt, so autozoog code likely lives there.
 
 import re
 import pytz
