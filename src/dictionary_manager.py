@@ -250,14 +250,20 @@ class DictionaryManager:
             if line.strip().startswith("---"):
                 in_rejected = False
             if in_rejected and line.strip():
-                # Rejected autozoogs share one comma-separated line: remove only the matching piece
-                parts = [p.strip() for p in line.split(",") if p.strip()]
-                kept = [p for p in parts if p.lower() != target]
-                if len(kept) < len(parts):
-                    changed = True
-                    if kept:
-                        new_lines.append(", ".join(kept))
-                    continue
+                if " | " in line:
+                    # Rejected autozoog saved as "word | match": remove the whole line if the word matches
+                    if line.split(" | ")[0].strip().lower() == target:
+                        changed = True
+                        continue
+                else:
+                    # Older rejected autozoogs share one comma-separated line: remove only the matching piece
+                    parts = [p.strip() for p in line.split(",") if p.strip()]
+                    kept = [p for p in parts if p.lower() != target]
+                    if len(kept) < len(parts):
+                        changed = True
+                        if kept:
+                            new_lines.append(", ".join(kept))
+                        continue
             if line.strip().lower() == target:
                 # Whole line matches: remove the entire line
                 changed = True
