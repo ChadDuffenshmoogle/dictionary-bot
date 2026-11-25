@@ -29,8 +29,10 @@ class GitHubAPI:
     def list_dictionary_files(self) -> List[str]:
         """List all dictionary files in the repository with improved error handling."""
         try:
-            logger.info(f"Attempting to list files from: {self.base_url}")
-            response = requests.get(self.base_url, headers=self.headers, timeout=30)
+            # The "git trees" listing has no 1,000-file cap (the "contents" listing does)
+            tree_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/git/trees/{GITHUB_BRANCH}"
+            logger.info(f"Attempting to list files from: {tree_url}")
+            response = requests.get(tree_url, headers=self.headers, timeout=30)
             
             logger.info(f"GitHub API response status: {response.status_code}")
             
@@ -46,16 +48,16 @@ class GitHubAPI:
             
             response.raise_for_status()
             
-            files = response.json()
+            files = [f for f in response.json()["tree"] if f["type"] == "blob"]
             logger.info(f"Retrieved {len(files)} total files from GitHub")
             
             # Log all files for debugging
-            all_filenames = [file['name'] for file in files]
+            all_filenames = [file['path'] for file in files]
             logger.info(f"All files in repo: {all_filenames}")
             
             dictionary_files = [
-                file['name'] for file in files 
-                if file['name'].startswith('UNICYCLIST DICTIONARY') and file['name'].endswith('.txt')
+                file['path'] for file in files 
+                if file['path'].startswith('UNICYCLIST DICTIONARY') and file['path'].endswith('.txt')
             ]
             
             logger.info(f"Found {len(dictionary_files)} dictionary files: {dictionary_files}")
