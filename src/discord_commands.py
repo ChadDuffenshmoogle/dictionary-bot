@@ -1,788 +1,536 @@
-# src/discord_commands.py
-# Discord commands cog: dictionary lookup, stats, charts, random entries/zoogs, streak, and help, backed by DictionaryManager.
+# src/dictionary_manager.py
+# Reads, adds, and removes dictionary entries and Zoogliography lines in the GitHub repo via GitHubAPI, handling versioning and sorting.
+# Related files (what this file needs for certain things):
+# - src/github_api.py: all reading and writing of files on GitHub (get_file_content, create_or_update_file, list_dictionary_files).
+# - src/dictionary_parser.py: DictionaryEntry, parse_dictionary_entries, sort_key_ignore_punct, and format_entry (reading, sorting, and writing entries).
+# - src/config.py: BASE_VERSION, FILE_PREFIX, FILE_EXTENSION, logger, ENTRY_PATTERN.
+# - src/main.py: calls add_entry, add_to_zoogliography (zoog:), and remove_from_zoogliography (dezoog:).
+# - src/discord_commands.py: calls get_zoogs (!random zoog), find_latest_version, and get_all_entries.
+# - Stats script (not uploaded): writes the "--- Predicted Next Word ---" section of Zoogliography.txt, so autozoog code likely lives there.
 
-import discord
-import os
-import random
 import re
+import json
 import pytz
 from datetime import datetime
-from typing import TYPE_CHECKING, List
-from discord.ext import commands
-from .dictionary_parser import count_dictionary_entries
-from wordcloud import WordCloud
-import matplotlib
-matplotlib.use('Agg')  # Set backend before importing pyplot
-import matplotlib.pyplot as plt
-from io import BytesIO
-import numpy as np
-from collections import Counter
+from typing import Optional, List
+from .github_api import GitHubAPI
+from .dictionary_parser import DictionaryEntry, parse_dictionary_entries, sort_key_ignore_punct, format_entry
+from .config import BASE_VERSION, FILE_PREFIX, FILE_EXTENSION, logger, ENTRY_PATTERN
 
-# To avoid circular imports for type hinting
-if TYPE_CHECKING:
-    from .dictionary_manager import DictionaryManager
+# Remembers which Discord message added which word (message id -> word), so editing the message can update the word.
+ENTRY_MESSAGES_FILE = "Entry_Messages.json"
 
-from .config import GITHUB_OWNER, GITHUB_REPO, logger
+class DictionaryManager:
+    """Manages dictionary operations with GitHub integration."""
 
-class DictionaryCommands(commands.Cog):
-    def __init__(self, bot: commands.Bot, dict_manager: "DictionaryManager"):
-        self.bot = bot
-        self.dict_manager = dict_manager
-        logger.info("DictionaryCommands cog initialized.")
+    def __init__(self, github_api: GitHubAPI):
+        self.github = github_api
+        self._cache = {}  # Cache file contents to avoid repeated API calls
 
-    @commands.command(name='getversion')
-    async def get_version(self, ctx: commands.Context, version_arg: str = "latest"):
-        """Sends a specific dictionary version file to the channel."""
-        version = version_arg
-        if version_arg.lower() == "latest":
-            version = self.dict_manager.find_latest_version()
-            await ctx.send(f"📖 Sending latest version: {version}")
-        else:
-            # Allow formats like "1.2.4" instead of requiring "v1.2.4"
-            if not version_arg.startswith('v'):
-                version = f"v{version_arg}"
-            else:
-                version = version_arg
+    def find_latest_version(self) -> str:
+        """Finds the latest dictionary version from GitHub - FIXED VERSION."""
+        try:
+            files = self.github.list_dictionary_files()
+            logger.info(f"Found {len(files)} dictionary files from GitHub")
+            
+            if not files:
+                logger.warning("No dictionary files found, using base version")
+                return BASE_VERSION
 
-        content = self.dict_manager.get_dictionary_content(version)
+            max_version = BASE_VERSION
+            max_nums = [int(i) for i in BASE_VERSION[1:].split('.')]
+
+            for filename in files:
+                logger.debug(f"Processing filename: {filename}")
+                
+                # More flexible regex to match various version formats in your files
+                # This will match "v1.2.44", "v1.2.4", etc.
+                version_patterns = [
+                    r"v\.?(\d+)\.(\d+)\.(\d+)",  # Original pattern
+                    r"(\d+)\.(\d+)\.(\d+)",     # Without 'v' prefix
+                    r"v(\d+)\.(\d+)\.(\d+)",    # With 'v' prefix
+                ]
+                
+                matched = False
+                for pattern in version_patterns:
+                    m = re.search(pattern, filename, re.IGNORECASE)
+                    if m:
+                        nums = list(map(int, m.groups()))
+                        logger.debug(f"Extracted version numbers: {nums} from {filename}")
+                        
+                        # Compare version numbers properly
+                        if self._compare_versions(nums, max_nums) > 0:
+                            max_nums = nums
+                            max_version = f"v{nums[0]}.{nums[1]}.{nums[2]}"
+                            logger.debug(f"New max version: {max_version}")
+                        matched = True
+                        break
+                
+                if not matched:
+                    logger.warning(f"Could not extract version from filename: {filename}")
+
+            logger.info(f"Latest version detected: {max_version}")
+            return max_version
+            
+        except Exception as e:
+            logger.error(f"Error finding latest version: {e}")
+            logger.error(f"Falling back to base version: {BASE_VERSION}")
+            return BASE_VERSION
+
+    def _compare_versions(self, version1: List[int], version2: List[int]) -> int:
+        """Compare two version number lists. Returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal."""
+        for i in range(max(len(version1), len(version2))):
+            v1_part = version1[i] if i < len(version1) else 0
+            v2_part = version2[i] if i < len(version2) else 0
+            
+            if v1_part > v2_part:
+                return 1
+            elif v1_part < v2_part:
+                return -1
+        return 0
+
+    def get_filename(self, version: str) -> str:
+        """Constructs the filename for a given dictionary version."""
+        return f"{FILE_PREFIX} {version}{FILE_EXTENSION}"
+
+    def get_dictionary_content(self, version: str) -> Optional[str]:
+        """Gets the live dictionary content from GitHub (never cached)."""
+        filename = self.get_filename(version)
+        logger.info(f"Attempting to get content for: {filename}")
+
+        # Always read the live file: the wiki editor can change it at any time,
+        # so a remembered copy would be out of date.
+        content = self.github.get_file_content(filename)
         if content:
-            filename = self.dict_manager.get_filename(version)
-            temp_filepath = f"/tmp/{filename}"
-            with open(temp_filepath, "w", encoding="utf-8") as f:
-                f.write(content)
-            await ctx.send(file=discord.File(temp_filepath))
-            os.remove(temp_filepath)
+            logger.info(f"Successfully retrieved content for {filename}")
         else:
-            await ctx.send(f"Version `{version_arg}` not found.")
+            logger.warning(f"Failed to retrieve content for {filename}")
 
-    @commands.command(name='stats')
-    async def show_stats(self, ctx: commands.Context):
-        """Displays dictionary statistics."""
-        latest = self.dict_manager.find_latest_version()
-        content = self.dict_manager.get_dictionary_content(latest)
+        return content
 
-        if not content:
-            await ctx.send("No dictionary file found to get stats from.")
-            return
+    def get_all_entries(self, version: str) -> List[DictionaryEntry]:
+        """Gets and parses all dictionary entries for a given version."""
+        content = self.get_dictionary_content(version)
+        if content:
+            return parse_dictionary_entries(content)
+        return []
 
-        entry_count = count_dictionary_entries(content)
-        ety_count = content.count("Etymology:")
-        size_kb = round(len(content.encode('utf-8')) / 1024, 1)
-
+    def add_entry(self, term: str, pos: str, definition: str, ety_lines: Optional[List[str]] = None, 
+                  example_lines: Optional[List[str]] = None, pronunciation: Optional[str] = None, 
+                  additional_info: Optional[List[str]] = None, sections: Optional[List[dict]] = None,
+                  etymology: Optional[str] = None) -> bool:
+        """Adds a new entry by preserving all original formatting and adding entry in alphabetical order."""
         cdt = pytz.timezone('America/Chicago')
         now = datetime.now(cdt)
-        formatted_datetime = now.strftime("%B %d, %Y %I:%M %p CDT")
+        timestamp = now.strftime("%B %d, %Y %I:%M %p CDT")
+        logger.info(f"Adding new term: '{term}' at {timestamp}")
 
-        stats_msg = f"""📊 **Unicyclist Dictionary Statistics** as of {formatted_datetime}:
+        # Find latest version
+        latest = self.find_latest_version()
+        latest_content = self.get_dictionary_content(latest)
 
-**Latest Version:** {latest}
-**Dictionary Entries:** {entry_count:,}
-**File Size:** {size_kb} KB
-**For more stats, see the website:** https://chadduffenshmoogle.github.io/dictionary-versions/"""
+        if not latest_content:
+            logger.error(f"Could not get content for version {latest}. Cannot add entry.")
+            return False
 
-        await ctx.send(stats_msg)
+        # No CORPUS section in the file anymore -- check duplicates
+        # against the actual parsed dictionary entries instead.
+        existing_entries = self.get_all_entries(latest)
+        logger.info(f"Loaded {len(existing_entries)} entries for version {latest}")
 
-    @commands.command(name='random')
-    async def show_random_entry(self, ctx: commands.Context, arg: str = ""):
-        """Displays a random dictionary entry, or a random zoog with `!random zoog`."""
-        if arg.strip().lower() == "zoog":
-            zoogs = self.dict_manager.get_zoogs()
-            if not zoogs:
-                await ctx.send("No zoogs found in the Zoogliography.")
-                return
-            await ctx.send(f"🎲 {random.choice(zoogs)}")
-            return
+        if any(term.lower() == e.term.lower() for e in existing_entries):
+            logger.warning(f"Term '{term}' already exists—skipping addition.")
+            return False
 
-        latest = self.dict_manager.find_latest_version()
-        entries = self.dict_manager.get_all_entries(latest)
-
-        if not entries:
-            await ctx.send("No entries found in the dictionary.")
-            return
-
-        random_entry = random.choice(entries)
-        result = random_entry.to_string()
-
-        # Clean up display of complex entries for Discord
-        if result.startswith("---------------------------------------------"):
-            lines = result.split('\n')
-            clean_lines = [line for line in lines if not line.strip().startswith("---------------------------------------------")]
-            result = '\n'.join(clean_lines).strip()
-
-        await ctx.send(f"{result}")
-
-    @commands.command(name='streak')
-    async def show_streak(self, ctx: commands.Context):
-        """Shows the current consecutive-day word streak (Central time)."""
-        from .main import get_word_days, compute_active_streak, CENTRAL
-        word_days = get_word_days()
-        streak = compute_active_streak(word_days)  # counts days ending yesterday
-        today_str = datetime.now(CENTRAL).strftime("%Y-%m-%d")
-        added_today = today_str in word_days
-        if added_today:
-            streak += 1
-
-        if streak < 1:
-            await ctx.send("🔥 No active streak. Add a word today to start one!")
+        # Determine new version (increment patch)
+        m = re.search(r"v\.?(\d+)\.(\d+)\.(\d+)", latest, re.IGNORECASE)
+        if m:
+            major, minor, patch = map(int, m.groups())
+            new_version = f"v{major}.{minor}.{patch+1}"
         else:
-            status = "a word was added today" if added_today else "no word yet today"
-            await ctx.send(f"🔥 Current streak: **{streak}** day{'s' if streak != 1 else ''} ({status}).")
+            new_version = "v1.2.5"  # Fallback
 
-    @commands.command(name='search')
-    async def search_entries(self, ctx: commands.Context, *, query: str):
-        """Searches for dictionary entries by term or definition.
-        Usage: 
-        !search <query> - search terms only (default)
-        !search -d <query> - search definitions only  
-        !search -a <query> - search both terms and definitions
-        """
-        # Parse flags
-        search_terms = True
-        search_definitions = False
+        # Create new entry with appropriate formatting
+        if sections is None:
+            sections = [{"pos": pos, "defs": [{"text": definition, "example": (example_lines or [""])[0]}]}]
+        if etymology is None and ety_lines:
+            etymology = " ".join(l.strip() for l in ety_lines if l.strip())
+        new_entry_text = self._format_new_entry(term, sections, etymology, pronunciation)
+
+        # Split content at the dictionary proper boundary
+        if "-----DICTIONARY PROPER-----" in latest_content:
+            header_part, body_part = latest_content.split("-----DICTIONARY PROPER-----", 1)
+            
+            # Update header with new version and timestamp
+            new_header = self._update_header(header_part, new_version, timestamp)
+            
+            # Find insertion point and insert new entry in body
+            new_body = self._insert_entry_in_body(body_part, term, new_entry_text)
+            
+            # Reconstruct the file
+            new_content = new_header + "-----DICTIONARY PROPER-----" + new_body
+        else:
+            logger.error("Could not find dictionary proper section")
+            return False
+
+        # Upload to GitHub
+        filename = self.get_filename(new_version)
+        commit_message = f"Add dictionary {new_version} with new term '{term}'"
+
+        success = self.github.create_or_update_file(filename, new_content, commit_message)
+
+        if success:
+            # Clear cache to force refresh for new version
+            self._cache.clear()
+            logger.info(f"Successfully created {filename}")
+            return True
+        else:
+            logger.error(f"Failed to upload {filename}")
+            return False
+
+    def _zoog_timestamp(self) -> str:
+        cdt = pytz.timezone('America/Chicago')
+        now = datetime.now(cdt)
+        return now.strftime("%B %d, %Y %I:%M %p CDT")
+
+    def _strip_zoog_header(self, content: str) -> str:
+        """Removes the existing 'ZOOGLIOGRAPHY - <timestamp>' header line
+        (and the blank line after it) if present, leaving just the body."""
+        return re.sub(r'^ZOOGLIOGRAPHY - .+\n\n?', '', content, count=1)
+
+    def add_to_zoogliography(self, text: str) -> bool:
+        """Adds a line to the single Zoogliography.txt file in the repo,
+        keeping the whole list alphabetized the same way the dictionary
+        itself is (sort_key_ignore_punct). Creates the file if it doesn't
+        exist. Unlike the dictionary, this file has no versioning -- it's
+        just overwritten in place each time. Keeps a dictionary-style
+        header (title + last-updated timestamp) at the top, refreshed on
+        every change."""
+        existing = self.github.get_file_content("Zoogliography.txt") or ""
+        body = self._strip_zoog_header(existing).strip("\n")
+
+        # Keep the "Predicted Next Word" section (written by the stats
+        # script) separate: sort only the lines above it, then put it back.
+        marker = "--- Predicted Next Word ---"
+        body, found, predicted = body.partition(marker)
+        body = body.strip("\n")
+
+        lines = [line for line in body.split("\n") if line.strip()] if body else []
+        lines.append(text)
+        lines = sorted(set(lines), key=sort_key_ignore_punct)
+
+        new_body = "\n".join(lines)
+        if found:
+            new_body += f"\n\n{marker}{predicted}"
+        new_content = f"ZOOGLIOGRAPHY - {self._zoog_timestamp()}\n\n{new_body}"
+        commit_message = f"Add to Zoogliography: '{text[:60]}'"
+
+        success = self.github.create_or_update_file("Zoogliography.txt", new_content, commit_message)
+        if success:
+            logger.info(f"Added to Zoogliography: {text}")
+        else:
+            logger.error(f"Failed to add to Zoogliography: {text}")
+        return success
         
-        if query.startswith('-d '):
-            search_terms = False
-            search_definitions = True
-            query = query[3:]
-        elif query.startswith('-a '):
-            search_terms = True
-            search_definitions = True
-            query = query[3:]
-        
-        latest = self.dict_manager.find_latest_version()
-        content = self.dict_manager.get_dictionary_content(latest)
-        
-        if not content:
-            await ctx.send("No dictionary content found.")
-            return
-        
-        if "-----DICTIONARY PROPER-----" not in content:
-            await ctx.send("Dictionary format not recognized.")
-            return
-        
-        dict_section = content.split("-----DICTIONARY PROPER-----", 1)[1]
-        
-        # Just search every line that looks like it has a dictionary entry
-        matches = []
-        lines = dict_section.split('\n')
-        
+    def remove_from_zoogliography(self, text: str) -> bool:
+        """Removes a line matching `text` from Zoogliography.txt (exact
+        match, case-insensitive, ignoring surrounding whitespace). Returns
+        False if the file doesn't exist or no line matches."""
+        existing = self.github.get_file_content("Zoogliography.txt")
+        if not existing:
+            return False
+
+        body = self._strip_zoog_header(existing)
+        lines = body.split("\n")
+        target = text.strip().lower()
+        new_lines = []
+        changed = False
+        in_rejected = False
         for line in lines:
-            stripped = line.strip()
-            if not stripped or stripped.startswith('-----'):
+            if line.strip().startswith("--- Rejected Predictions"):
+                in_rejected = True
+                new_lines.append(line)
                 continue
-                
-            # Check if this line looks like a dictionary entry
-            if ('(' in stripped and ')' in stripped) and (stripped.startswith('-') or ' - ' in stripped or stripped.endswith(')')):
-                # Extract the term from this line
-                term = self._extract_term_from_line(stripped)
-                
-                if search_terms and not search_definitions:
-                    # Term search only
-                    if term and query.lower() in term.lower():
-                        matches.append(stripped)
-                elif search_definitions and not search_terms:
-                    # Definition search only
-                    if ' - ' in stripped:
-                        definition = stripped.split(' - ', 1)[1]
-                        if query.lower() in definition.lower():
-                            matches.append(stripped)
+            if line.strip().startswith("---"):
+                in_rejected = False
+            if in_rejected and line.strip():
+                if " | " in line:
+                    # Rejected autozoog saved as "word | match": remove the whole line if the word matches
+                    if line.split(" | ")[0].strip().lower() == target:
+                        changed = True
+                        continue
                 else:
-                    # Search both
-                    if query.lower() in stripped.lower():
-                        matches.append(stripped)
-        
-        if not matches:
-            search_type = "definitions" if not search_terms else "terms" if not search_definitions else "terms and definitions"
-            await ctx.send(f"🔍 No matches found for '{query}' in {search_type}.")
-            return
-        
-        # Format results
-        if len(matches) > 5:
-            result_intro = f"🔍 Found {len(matches)} matches for '{query}' (showing first 5):\n\n"
-            shown_matches = matches[:5]
+                    # Older rejected autozoogs share one comma-separated line: remove only the matching piece
+                    parts = [p.strip() for p in line.split(",") if p.strip()]
+                    kept = [p for p in parts if p.lower() != target]
+                    if len(kept) < len(parts):
+                        changed = True
+                        if kept:
+                            new_lines.append(", ".join(kept))
+                        continue
+            if line.strip().lower() == target:
+                # Whole line matches: remove the entire line
+                changed = True
+                continue
+            if "/" in line:
+                # Slash-joined zoog: remove only the matching piece
+                parts = [p.strip() for p in line.split("/")]
+                kept = [p for p in parts if p.lower() != target]
+                if len(kept) < len(parts):
+                    changed = True
+                    if kept:
+                        new_lines.append(" / ".join(kept))
+                    continue
+            new_lines.append(line)
+
+        if not changed:
+            logger.warning(f"'{text}' not found in Zoogliography, nothing removed")
+            return False
+
+        new_body = "\n".join(new_lines).strip("\n")
+        new_content = f"ZOOGLIOGRAPHY - {self._zoog_timestamp()}\n\n{new_body}"
+        commit_message = f"Remove from Zoogliography: '{text[:60]}'"
+
+        success = self.github.create_or_update_file("Zoogliography.txt", new_content, commit_message)
+        if success:
+            logger.info(f"Removed from Zoogliography: {text}")
         else:
-            result_intro = f"🔍 Found {len(matches)} match{'es' if len(matches) > 1 else ''} for '{query}':\n\n"
-            shown_matches = matches
+            logger.error(f"Failed to remove from Zoogliography: {text}")
+        return success
         
-        match_strings = [f"```{match}```" for match in shown_matches]
-        result = result_intro + "\n\n".join(match_strings)
-        
-        if len(matches) > 5:
-            result += f"\n\n...and {len(matches)-5} more"
-        
-        if len(result) > 2000:
-            result = result[:1950] + "...\n*Message truncated*"
-        
-        await ctx.send(result)
-    
-    def _extract_term_from_line(self, line: str) -> str:
-        """Extract term from a single line."""
-        # Handle bullet points
-        if line.strip().startswith('- '):
-            line = line.strip()[2:]
-        
-        # Find everything before the first opening parenthesis
-        if '(' in line:
-            term_part = line.split('(')[0].strip()
-            # Remove phonetics like /phonetic/
-            term_part = re.sub(r'/[^/]+/', '', term_part)
-            return term_part.strip()
-        
-        return ""
+    def get_zoogs(self) -> List[str]:
+        """Returns the Zoogliography lines, excluding the header and the
+        'Predicted Next Word' section."""
+        existing = self.github.get_file_content("Zoogliography.txt")
+        if not existing:
+            return []
+        body = self._strip_zoog_header(existing).split("--- Predicted Next Word ---", 1)[0]
+        return [line.strip() for line in body.split("\n") if line.strip()]
 
-    @commands.command(name='debug_search')
-    async def debug_search(self, ctx: commands.Context, *, query: str):
-        """Debug search to see what terms are being extracted."""
-        latest = self.dict_manager.find_latest_version()
-        content = self.dict_manager.get_dictionary_content(latest)
-        
-        if "-----DICTIONARY PROPER-----" not in content:
-            await ctx.send("Dictionary format not recognized.")
-            return
-        
-        dict_section = content.split("-----DICTIONARY PROPER-----", 1)[1]
-        
-        # Find entries that might contain the query and show what terms are extracted
-        debug_info = []
-        lines = dict_section.split('\n')
-        current_entry = []
-        
-        for line in lines:
-            stripped = line.strip()
-            
-            if stripped.startswith('-----') and len(stripped) > 10:
-                if current_entry:
-                    entry_text = '\n'.join(current_entry)
-                    if query.lower() in entry_text.lower():
-                        extracted_term = self._extract_term_from_text(entry_text)
-                        debug_info.append(f"Entry: {entry_text[:100]}...")
-                        debug_info.append(f"Extracted term: '{extracted_term}'")
-                        debug_info.append("---")
-                    current_entry = []
-                current_entry = [line]
-            elif current_entry:
-                current_entry.append(line)
-            elif stripped and query.lower() in stripped.lower():
-                extracted_term = self._extract_term_from_text(stripped)
-                debug_info.append(f"Simple entry: {stripped}")
-                debug_info.append(f"Extracted term: '{extracted_term}'")
-                debug_info.append("---")
-        
-        if current_entry:
-            entry_text = '\n'.join(current_entry)
-            if query.lower() in entry_text.lower():
-                extracted_term = self._extract_term_from_text(entry_text)
-                debug_info.append(f"Entry: {entry_text[:100]}...")
-                debug_info.append(f"Extracted term: '{extracted_term}'")
-        
-        if debug_info:
-            result = "\n".join(debug_info)
-            if len(result) > 1900:
-                result = result[:1900] + "..."
-            await ctx.send(f"```{result}```")
+    def replace_entry(self, old_term: str, term: str, pos: str, definition: str,
+                      pronunciation: Optional[str] = None, sections: Optional[List[dict]] = None,
+                      etymology: Optional[str] = None) -> bool:
+        """Swaps the entry called old_term for an edited version (the word itself may change).
+        Saved as a new dictionary version, like adding a word."""
+        latest = self.find_latest_version()
+        latest_content = self.get_dictionary_content(latest)
+        if not latest_content or "-----DICTIONARY PROPER-----" not in latest_content:
+            logger.error(f"Could not read the dictionary ({latest}). Cannot edit entry.")
+            return False
+
+        header_part, body_part = latest_content.split("-----DICTIONARY PROPER-----", 1)
+        lines = body_part.split('\n')
+        old_unit = next((u for u in self._parse_units(lines) if u[3].strip().lower() == old_term.strip().lower()), None)
+        if not old_unit:
+            logger.warning(f"Entry '{old_term}' not found in {latest}, nothing edited.")
+            return False
+
+        # A new spelling may not be the same as a different entry that already exists
+        if term.strip().lower() != old_term.strip().lower():
+            if any(term.lower() == e.term.lower() for e in parse_dictionary_entries(latest_content)):
+                logger.warning(f"Term '{term}' already exists, cannot rename '{old_term}' to it.")
+                return False
+
+        # Take the old entry out (and one leftover blank line), then put the new one in its alphabetical place
+        start, end = old_unit[1], old_unit[2]
+        del lines[start:end + 1]
+        if 0 < start < len(lines) and not lines[start].strip() and not lines[start - 1].strip():
+            del lines[start]
+
+        if sections is None:
+            sections = [{"pos": pos, "defs": [{"text": definition, "example": ""}]}]
+        new_entry_text = self._format_new_entry(term, sections, etymology, pronunciation)
+        new_body = self._insert_entry_in_body('\n'.join(lines), term, new_entry_text)
+        if new_body == body_part:
+            logger.info(f"Entry '{old_term}' is already up to date, nothing to save.")
+            return True
+
+        m = re.search(r"v\.?(\d+)\.(\d+)\.(\d+)", latest, re.IGNORECASE)
+        if m:
+            major, minor, patch = map(int, m.groups())
+            new_version = f"v{major}.{minor}.{patch+1}"
         else:
-            await ctx.send(f"No entries found containing '{query}'")
+            new_version = "v1.2.5"  # Fallback
+        timestamp = datetime.now(pytz.timezone('America/Chicago')).strftime("%B %d, %Y %I:%M %p CDT")
+        new_content = self._update_header(header_part, new_version, timestamp) + "-----DICTIONARY PROPER-----" + new_body
+
+        # This wording is on purpose: the stats script only counts commits that say "with new term" as new words,
+        # and reads "renamed 'old' to 'new'" to keep a renamed word's original add date.
+        if term != old_term:
+            commit_message = f"Edit dictionary {new_version}: renamed '{old_term}' to '{term}'"
+        else:
+            commit_message = f"Edit dictionary {new_version}: updated entry '{term}'"
+
+        success = self.github.create_or_update_file(self.get_filename(new_version), new_content, commit_message)
+        if success:
+            self._cache.clear()
+            logger.info(f"Successfully edited entry '{old_term}' -> '{term}' in {new_version}")
+        else:
+            logger.error(f"Failed to upload {new_version} while editing '{old_term}'")
+        return success
+
+    def get_entry_message_term(self, message_id) -> Optional[str]:
+        """The word that the given Discord message added (None if this message isn't linked to one)."""
+        links = self.github.get_json_file(ENTRY_MESSAGES_FILE, {}) or {}
+        return links.get(str(message_id))
+
+    def save_entry_message(self, message_id, term: str) -> bool:
+        """Remembers which word a Discord message added, so editing that message can update the word later."""
+        links = self.github.get_json_file(ENTRY_MESSAGES_FILE, {}) or {}
+        links[str(message_id)] = term
+        success = self.github.create_or_update_file(
+            ENTRY_MESSAGES_FILE,
+            json.dumps(links, indent=2, ensure_ascii=False),
+            f"Link Discord message {message_id} to entry '{term[:60]}' [skip ci]"
+        )
+        if not success:
+            logger.warning(f"Could not save the message link for '{term}'")
+        return success
+
+    def _format_new_entry(self, term: str, sections: List[dict], etymology: Optional[str] = None,
+                          pronunciation: Optional[str] = None) -> str:
+        """One line for a plain entry, a hyphen block for anything richer."""
+        return format_entry(term, sections, etymology, pronunciation)
+
+    def _update_header(self, header_part: str, new_version: str, timestamp: str) -> str:
+        """Update the header with the new version and timestamp."""
+        lines = header_part.split('\n')
+        lines[0] = f"{FILE_PREFIX} {new_version} - {timestamp}"
+        return '\n'.join(lines)
+
+    def _parse_units(self, lines: List[str]) -> list:
+        """Finds each entry in the dictionary body: a list of (sort_key, start_line, end_line, term)."""
+        # Parse the body into atomic units (hyphen blocks or simple entries)
+        units = []  # List of (sort_key, start_line, end_line, term_name)
+        i = 0
         
-    @commands.command(name='versions')
-    async def list_versions(self, ctx: commands.Context):
-        """Lists all available dictionary versions."""
-        files = self.dict_manager.github.list_dictionary_files()
-        if not files:
-            await ctx.send("No dictionary versions found on GitHub.")
-            return
-
-        versions_with_sizes = []
-        for filename in files:
-            m = re.search(r"v\.?(\d+)\.(\d+)\.(\d+)", filename, re.IGNORECASE)
-            if m:
-                version = f"v{m.group(1)}.{m.group(2)}.{m.group(3)}"
-                content = self.dict_manager.get_dictionary_content(version)
-                file_size = round(len(content.encode('utf-8')) / 1024, 1) if content else 0
-                versions_with_sizes.append((version, file_size))
-
-        versions_with_sizes.sort(key=lambda x: [int(i) for i in x[0][1:].split('.')])
-
-        version_list = [f"**{v[0]}** ({v[1]} KB)" for v in versions_with_sizes]
-        version_text = "\n".join(version_list)
-
-        msg = f"""{version_text}
-Use `!getversion <X.X.X>` to show any version."""
-
-        await ctx.send(msg)
-
-    @commands.command(name='help')
-    async def send_help_message(self, ctx: commands.Context):
-        """Sends the help message for the bot."""
-        help_msg = f"""📖 **Dictionary Bot Commands:**
-Statistics and data viz: https://chadduffenshmoogle.github.io/dictionary-versions/
-
-`!getversion [version]` - Download a specific version or latest (default)
-`!stats` - Show dictionary statistics
-`!random` - Show a random dictionary entry
-`!random zoog` - Show a random zoog
-`!streak` - Show the current word streak
-`!search <query>` - Search for terms containing the query
-`!search -d <query>` - Search definitions only
-`!search -a <query>` - Search both terms and definitions
-`!versions` - List all available versions with added terms
-`!wordcloud [filter] [num] [-d]` - Generate word cloud (default 100 terms, -d for full definitions, filter optional)
-`!letterheatmap [-i]` - Letter frequency heatmap (all letters or -i for initial only)
-`!help` - Show this help message
-
-📝 **Entry Formats for Adding New Terms:**
-
-**Simple Entry:**
-`word (n) - definition`
-
-**With Pronunciation:**
-`word (adj) - /pronunciation/ definition`
-
-**Complex Entry with Etymology:**
-```
-Etymology: from Latin whatever
-word (v) - definition
-- Example: This is how you use it
-```
-**Undefined word storage:**
-```
-zoog: 
-dezoog: 
-```
-Join related zoogs with ` / `. `dezoog:` removes one piece, or the whole line if all are given."""
-        await ctx.send(help_msg)
-
-    @commands.command(name='nudge', hidden=True)
-    async def toggle_nudge(self, ctx: commands.Context):
-        """Turns the daily streak nudge on or off."""
-        from .main import load_nudge_state, save_nudge_state
-        state = load_nudge_state()
-        state["enabled"] = not state.get("enabled", True)
-        save_nudge_state(state)
-        await ctx.send(f"🔔 Streak nudges are now {'ON' if state['enabled'] else 'OFF'}.")
-
-    @commands.command(name='debug')
-    async def debug_bot(self, ctx: commands.Context):
-        """Debug command to check bot connectivity and GitHub access."""
-        debug_msg = "🔧 **Bot Debug Information:**\n\n"
-        
-        # Test GitHub connection
-        debug_msg += "**GitHub API Test:**\n"
-        try:
-            connection_ok = self.dict_manager.github.test_connection()
-            if connection_ok:
-                debug_msg += "✅ GitHub API connection successful\n"
-            else:
-                debug_msg += "❌ GitHub API connection failed\n"
-        except Exception as e:
-            debug_msg += f"❌ GitHub API connection error: {str(e)}\n"
-        
-        debug_msg += "\n**Repository Files:**\n"
-        try:
-            files = self.dict_manager.github.list_dictionary_files()
-            if files:
-                debug_msg += f"✅ Found {len(files)} dictionary files:\n"
-                for file in files[:10]:  # Show first 10 files
-                    debug_msg += f"  • {file}\n"
-                if len(files) > 10:
-                    debug_msg += f"  ... and {len(files) - 10} more\n"
-            else:
-                debug_msg += "❌ No dictionary files found\n"
-        except Exception as e:
-            debug_msg += f"❌ Error listing files: {str(e)}\n"
-        
-        debug_msg += "\n**Version Detection:**\n"
-        try:
-            latest_version = self.dict_manager.find_latest_version()
-            debug_msg += f"✅ Latest version detected: {latest_version}\n"
+        while i < len(lines):
+            line = lines[i].strip()
             
-            # Try to get content for this version
-            content = self.dict_manager.get_dictionary_content(latest_version)
-            if content:
-                debug_msg += f"✅ Successfully loaded content ({len(content)} chars)\n"
+            # Check if this line starts a hyphen block
+            if line.startswith('-----') and len(line) > 10:
+                block_start = i
+                block_term = None
                 
-                # Check corpus
-                corpus = self.dict_manager.get_all_corpus(latest_version)
-                debug_msg += f"✅ Corpus loaded: {len(corpus)} terms\n"
-            else:
-                debug_msg += "❌ Failed to load dictionary content\n"
-                
-        except Exception as e:
-            debug_msg += f"❌ Error detecting version: {str(e)}\n"
-        
-        # Environment check
-        debug_msg += "\n**Environment:**\n"
-        import os
-        github_token_set = bool(os.environ.get('YOUR_GITHUB_PAT'))
-        discord_token_set = bool(os.environ.get('DISCORD_TOKEN'))
-        
-        debug_msg += f"{'✅' if github_token_set else '❌'} GitHub token set: {github_token_set}\n"
-        debug_msg += f"{'✅' if discord_token_set else '❌'} Discord token set: {discord_token_set}\n"
-        
-        # If message is too long, split it
-        if len(debug_msg) > 2000:
-            # Send in parts
-            parts = [debug_msg[i:i+1900] for i in range(0, len(debug_msg), 1900)]
-            for i, part in enumerate(parts):
-                if i == 0:
-                    await ctx.send(part)
+                # Find the main entry line and the end of the block
+                j = i + 1
+                while j < len(lines):
+                    inner_line = lines[j].strip()
+                    
+                    # Found closing hyphens
+                    if inner_line.startswith('-----') and len(inner_line) > 10:
+                        # This is the end of the block
+                        block_end = j
+                        if block_term:
+                            units.append((sort_key_ignore_punct(block_term), block_start, block_end, block_term))
+                        i = j + 1
+                        break
+                    
+                    # Look for the main entry line
+                    if (not block_term and inner_line and 
+                        not inner_line.startswith(('Etymology:', 'Ex:', 'Example:', '- ', 'Derived Terms:', 'Notes:', 'Pronunciation:')) and
+                        not re.match(r'^\d+\.\s', inner_line)):
+                        term = self._extract_term_from_line(inner_line)
+                        if term:
+                            block_term = term
+                    
+                    j += 1
                 else:
-                    await ctx.send(f"**Debug Info (continued {i+1}):**\n{part}")
+                    # Reached end of lines without finding closing hyphens
+                    i += 1
+            
+            # Check if it's a simple entry
+            elif line and not line.startswith('-----'):
+                term = self._extract_term_from_line(line)
+                if term:
+                    units.append((sort_key_ignore_punct(term), i, i, term))
+                i += 1
+            else:
+                i += 1
+        
+        return units
+
+    def _insert_entry_in_body(self, body_part: str, new_term: str, new_entry_text: str) -> str:
+        """Insert the new entry in alphabetical order in the dictionary body."""
+        new_sort_key = sort_key_ignore_punct(new_term)
+        logger.info(f"Inserting '{new_term}' with sort key: '{new_sort_key}'")
+        
+        lines = body_part.split('\n')
+        
+        units = self._parse_units(lines)
+        
+        # Find insertion point among the units
+        insertion_point = None
+        for sort_key, start_line, end_line, term_name in units:
+            if new_sort_key < sort_key:
+                insertion_point = start_line
+                logger.info(f"Found insertion point before '{term_name}' at line {start_line}")
+                break
+        
+        # Insert the new entry
+        if insertion_point is not None:
+            # Add spacing before if needed
+            if insertion_point > 0 and lines[insertion_point - 1].strip() != "":
+                lines.insert(insertion_point, "")
+                insertion_point += 1
+            
+            # Insert the new entry
+            entry_lines = new_entry_text.split('\n')
+            for j, entry_line in enumerate(entry_lines):
+                lines.insert(insertion_point + j, entry_line)
+            
+            # Add spacing after
+            next_line_index = insertion_point + len(entry_lines)
+            if next_line_index < len(lines) and lines[next_line_index].strip() != "":
+                lines.insert(next_line_index, "")
         else:
-            await ctx.send(debug_msg)
+            # Add at the end
+            if lines and lines[-1].strip() != "":
+                lines.append("")
+            entry_lines = new_entry_text.split('\n')
+            lines.extend(entry_lines)
+            lines.append("")
+        
+        return '\n'.join(lines)
 
-    
-    @commands.command(name='wordcloud')
-    async def generate_wordcloud(self, ctx: commands.Context, *args):
-        """Generates a word cloud from random dictionary terms.
-        Usage: 
-        !wordcloud [filter] [num_words] [-d] 
-        - filter: only include terms containing this string (optional)
-        - num_words: number of terms to include (default 100, max = dictionary size)
-        - -d: include full definitions in word cloud (can be anywhere)
+    def _extract_term_from_line(self, line: str) -> Optional[str]:
+        """Extract the main term from a line for sorting purposes."""
+        line = line.strip()
         
-        Examples:
-        !wordcloud 50 - 50 random terms
-        !wordcloud uni 30 - 30 terms containing "uni"
-        !wordcloud -d wheel 20 - 20 terms with "wheel", including definitions
-        !wordcloud wheel -d 20 - same as above
-        """
-        await ctx.send("🎨 Generating word cloud...")
+        # Try standard pattern first: term (pos) - definition
+        match = re.match(ENTRY_PATTERN, line)
+        if match:
+            raw_term = match.group(1)
+            # Remove pronunciation markers to get clean term
+            term = re.sub(r'/[^/]+/', '', raw_term)  # Remove /phonetic/
+            term = re.sub(r'\(pronounced:\s*[^)]+\)', '', term, flags=re.IGNORECASE)
+            term = re.sub(r'\[[^\]]+\]', '', term)
+            return term.strip()
         
-        try:
-            # Parse arguments
-            include_definitions = '-d' in args
-            
-            # Filter out the -d flag from args
-            filtered_args = [arg for arg in args if arg != '-d']
-            
-            # Default values
-            filter_str = None
-            num_words = 100  # Default to 100
-            
-            # Parse remaining arguments
-            # Look for numbers and strings
-            for arg in filtered_args:
-                if arg.isdigit():
-                    num_words = int(arg)
-                else:
-                    filter_str = arg
-            
-            latest = self.dict_manager.find_latest_version()
-            
-            if include_definitions:
-                # Get full entries
-                entries = self.dict_manager.get_all_entries(latest)
-                
-                if not entries:
-                    await ctx.send("No entries found in the dictionary.")
-                    return
-                
-                # Filter entries if filter_str provided
-                if filter_str:
-                    filtered_entries = [e for e in entries if filter_str.lower() in e.term.lower()]
-                    if not filtered_entries:
-                        await ctx.send(f"No entries found containing '{filter_str}'.")
-                        return
-                    entries = filtered_entries
-                
-                # Limit to available entries only (no artificial cap)
-                num_words = min(num_words, len(entries))
-                
-                # Get random sample of entries
-                selected_entries = random.sample(entries, num_words)
-                
-                # Build text from full entries using to_string() method
-                text_items = []
-                for entry in selected_entries:
-                    # Get the full entry string and clean it up
-                    entry_text = entry.to_string()
-                    # Remove separator lines
-                    entry_text = entry_text.replace('-' * 45, '').strip()
-                    # Replace newlines with spaces and collapse multiple spaces
-                    entry_text = ' '.join(entry_text.split())
-                    # Replace spaces with underscores to keep as single token
-                    text_items.append(entry_text.replace(' ', '_'))
-                
-            else:
-                # Just use terms, no definitions
-                terms = [e.term for e in self.dict_manager.get_all_entries(latest)]
-                
-                if not terms:
-                    await ctx.send("No terms found in the dictionary.")
-                    return
-                
-                # Filter terms if filter_str provided
-                if filter_str:
-                    filtered_terms = [term for term in terms if filter_str.lower() in term.lower()]
-                    if not filtered_terms:
-                        await ctx.send(f"No terms found containing '{filter_str}'.")
-                        return
-                    terms = filtered_terms
-                
-                # Limit to available terms only (no artificial cap)
-                num_words = min(num_words, len(terms))
-                
-                # Get random sample of terms
-                selected_terms = random.sample(terms, num_words)
-                text_items = [term.replace(' ', '_') for term in selected_terms]
-            
-            text = ' '.join(text_items)
-            
-            # Generate word cloud with max_words set to num_words
-            wordcloud = WordCloud(
-                width=1200, 
-                height=600,
-                background_color='white',
-                colormap='viridis',
-                relative_scaling=0.5,
-                min_font_size=6 if include_definitions else 10,
-                max_words=num_words,  # Allow up to num_words to display
-                regexp=r'\S+'  # This treats underscored phrases as single words
-            ).generate(text)
-            
-            # Replace underscores back with spaces in the final image
-            wordcloud_dict = wordcloud.words_
-            cleaned_dict = {k.replace('_', ' '): v for k, v in wordcloud_dict.items()}
-            
-            wordcloud_final = WordCloud(
-                width=1200, 
-                height=600,
-                background_color='white',
-                colormap='viridis',
-                relative_scaling=0.5,
-                min_font_size=6 if include_definitions else 10,
-                max_words=num_words  # Allow up to num_words to display
-            ).generate_from_frequencies(cleaned_dict)
-            
-            # Create the plot
-            plt.figure(figsize=(12, 6))
-            plt.imshow(wordcloud_final, interpolation='bilinear')
-            plt.axis('off')
-            plt.tight_layout(pad=0)
-            
-            # Save to bytes buffer
-            buffer = BytesIO()
-            plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
-            buffer.seek(0)
-            plt.close()
-            
-            # Build description message
-            desc = f"☁️ Word cloud with {num_words} random "
-            if filter_str:
-                desc += f"terms containing '{filter_str}'"
-            else:
-                desc += "terms"
-            if include_definitions:
-                desc += " (with definitions)"
-            desc += ":"
-            
-            # Send to Discord
-            await ctx.send(desc, file=discord.File(buffer, 'wordcloud.png'))
-            
-        except Exception as e:
-            logger.error(f"Error generating word cloud: {str(e)}")
-            await ctx.send(f"❌ Error generating word cloud: {str(e)}")
-    
-    @commands.command(name='letterheatmap')
-    async def generate_letter_heatmap(self, ctx: commands.Context, *args):
-        """Generates a heatmap showing letter frequency in dictionary terms.
-        Usage: 
-        !letterheatmap [-i]
-        - -i: count only initial letters of terms (default: all letters)
+        # Try flexible pattern for entries that might not match exactly
+        if '(' in line and ')' in line and ' - ' in line:
+            parts = line.split(' - ', 1)
+            if len(parts) == 2:
+                left_part = parts[0].strip()
+                # Find the last parentheses (this should be the POS)
+                paren_matches = list(re.finditer(r'\(([^)]+)\)', left_part))
+                if paren_matches:
+                    last_paren = paren_matches[-1]
+                    term_part = left_part[:last_paren.start()].strip()
+                    # Clean pronunciation markers
+                    term = re.sub(r'/[^/]+/', '', term_part)
+                    term = re.sub(r'\(pronounced:\s*[^)]+\)', '', term, flags=re.IGNORECASE)
+                    term = re.sub(r'\[[^\]]+\]', '', term)
+                    return term.strip()
         
-        Examples:
-        !letterheatmap - all letters across all terms
-        !letterheatmap -i - only first letters of terms
-        """
-        await ctx.send("📊 Generating letter distribution heatmap...")
+        # Try simpler pattern matching
+        simple_match = re.match(r'^([^(]+?)\s*\([^)]+\)\s*-', line)
+        if simple_match:
+            term = simple_match.group(1).strip()
+            # Clean pronunciation markers
+            term = re.sub(r'/[^/]+/', '', term)
+            term = re.sub(r'\(pronounced:\s*[^)]+\)', '', term, flags=re.IGNORECASE)
+            term = re.sub(r'\[[^\]]+\]', '', term)
+            return term.strip()
         
-        try:
-            import numpy as np
-            from collections import Counter
-            
-            # Check for -i flag
-            initial_only = '-i' in args
-            
-            latest = self.dict_manager.find_latest_version()
-            terms = [e.term for e in self.dict_manager.get_all_entries(latest)]
-            
-            if not terms:
-                await ctx.send("No terms found in the dictionary.")
-                return
-            
-            # Count letters
-            letter_counts = Counter()
-            
-            if initial_only:
-                # Count only first letters
-                for term in terms:
-                    first_char = term[0].upper()
-                    if first_char.isalpha():
-                        letter_counts[first_char] += 1
-            else:
-                # Count all letters in all terms
-                for term in terms:
-                    for char in term:
-                        if char.isalpha():
-                            letter_counts[char.upper()] += 1
-            
-            # Create alphabet array (A-Z)
-            alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-            counts = [letter_counts.get(letter, 0) for letter in alphabet]
-            
-            # Create heatmap (5 rows x 6 columns to fit 26 letters, last slot empty)
-            heatmap_data = np.zeros((5, 6))
-            for i, count in enumerate(counts):
-                row = i // 6
-                col = i % 6
-                heatmap_data[row][col] = count
-            
-            # Create the plot
-            fig, ax = plt.subplots(figsize=(12, 8))
-            
-            # Create heatmap
-            im = ax.imshow(heatmap_data, cmap='YlOrRd', aspect='auto')
-            
-            # Add colorbar
-            cbar = plt.colorbar(im, ax=ax)
-            cbar.set_label('Frequency', rotation=270, labelpad=20)
-            
-            # Set up ticks and labels
-            ax.set_xticks(np.arange(6))
-            ax.set_yticks(np.arange(5))
-            
-            # Label with letters
-            for i in range(26):
-                row = i // 6
-                col = i % 6
-                ax.text(col, row, alphabet[i], ha="center", va="center", 
-                       color="black", fontsize=16, fontweight='bold')
-                # Add count below letter
-                ax.text(col, row + 0.3, f"({counts[i]})", ha="center", va="center",
-                       color="black", fontsize=10)
-            
-            # Remove tick labels
-            ax.set_xticklabels([])
-            ax.set_yticklabels([])
-            
-            # Title
-            title = "Letter Distribution - " + ("Initial Letters Only" if initial_only else "All Letters")
-            ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
-            
-            # Add grid
-            ax.set_xticks(np.arange(6) - 0.5, minor=True)
-            ax.set_yticks(np.arange(5) - 0.5, minor=True)
-            ax.grid(which="minor", color="white", linestyle='-', linewidth=2)
-            
-            plt.tight_layout()
-            
-            # Save to bytes buffer
-            buffer = BytesIO()
-            plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
-            buffer.seek(0)
-            plt.close()
-            
-            # Build description
-            total_count = sum(counts)
-            most_common = max(letter_counts.items(), key=lambda x: x[1]) if letter_counts else ('?', 0)
-            
-            desc = f"📊 Letter Distribution Heatmap\n"
-            desc += f"Mode: {'Initial letters only' if initial_only else 'All letters in all terms'}\n"
-            desc += f"Total {'terms' if initial_only else 'letters'}: {total_count:,}\n"
-            desc += f"Most common: **{most_common[0]}** ({most_common[1]:,} occurrences)"
-            
-            # Send to Discord
-            await ctx.send(desc, file=discord.File(buffer, 'letter_heatmap.png'))
-            
-        except Exception as e:
-            logger.error(f"Error generating letter heatmap: {str(e)}")
-            await ctx.send(f"❌ Error generating letter heatmap: {str(e)}")
-
-    @commands.command(name='alphabarchart')
-    async def generate_alphabet_bar_chart(self, ctx: commands.Context):
-        """Generates a bar chart showing how many terms start with each letter.
-        Usage: !alphabarchart
-        """
-        await ctx.send("📊 Generating alphabet coverage chart...")
-        
-        try:
-            from collections import Counter
-            
-            latest = self.dict_manager.find_latest_version()
-            terms = [e.term for e in self.dict_manager.get_all_entries(latest)]
-            
-            if not terms:
-                await ctx.send("No terms found in the dictionary.")
-                return
-            
-            # Count first letters
-            letter_counts = Counter()
-            for term in terms:
-                first_char = term[0].upper()
-                if first_char.isalpha():
-                    letter_counts[first_char] += 1
-            
-            # Create alphabet array (A-Z)
-            alphabet = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
-            counts = [letter_counts.get(letter, 0) for letter in alphabet]
-            
-            # Create the bar chart
-            fig, ax = plt.subplots(figsize=(14, 6))
-            
-            # Create bars with color gradient based on count
-            bars = ax.bar(alphabet, counts, color='skyblue', edgecolor='black', linewidth=0.5)
-            
-            # Color bars based on count (gradient)
-            max_count = max(counts) if counts else 1
-            for bar, count in zip(bars, counts):
-                # Color gradient from light to dark blue
-                intensity = count / max_count if max_count > 0 else 0
-                bar.set_color(plt.cm.Blues(0.3 + intensity * 0.7))
-            
-            # Add count labels on top of bars
-            for i, (letter, count) in enumerate(zip(alphabet, counts)):
-                if count > 0:
-                    ax.text(i, count + max_count * 0.01, str(count), 
-                           ha='center', va='bottom', fontsize=9, fontweight='bold')
-            
-            # Styling
-            ax.set_xlabel('Letter', fontsize=12, fontweight='bold')
-            ax.set_ylabel('Number of Terms', fontsize=12, fontweight='bold')
-            ax.set_title('Alphabet Coverage - Terms Starting with Each Letter', 
-                        fontsize=14, fontweight='bold', pad=20)
-            ax.grid(axis='y', alpha=0.3, linestyle='--')
-            ax.set_axisbelow(True)
-            
-            # Add statistics text box
-            total_terms = len(terms)
-            letters_with_terms = sum(1 for c in counts if c > 0)
-            most_common = max(letter_counts.items(), key=lambda x: x[1]) if letter_counts else ('?', 0)
-            least_common_letters = [letter for letter, count in zip(alphabet, counts) if count == 0]
-            
-            stats_text = f"Total Terms: {total_terms}\n"
-            stats_text += f"Letters with Terms: {letters_with_terms}/26\n"
-            stats_text += f"Most Common: {most_common[0]} ({most_common[1]} terms)"
-            if least_common_letters:
-                stats_text += f"\nMissing: {', '.join(least_common_letters)}"
-            
-            ax.text(0.98, 0.97, stats_text, transform=ax.transAxes,
-                   fontsize=10, verticalalignment='top', horizontalalignment='right',
-                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-            
-            plt.tight_layout()
-            
-            # Save to bytes buffer
-            buffer = BytesIO()
-            plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
-            buffer.seek(0)
-            plt.close()
-            
-            # Send to Discord
-            await ctx.send(
-                f"📊 Alphabet coverage for {total_terms} terms:",
-                file=discord.File(buffer, 'alphabet_coverage.png')
-            )
-            
-        except Exception as e:
-            logger.error(f"Error generating alphabet bar chart: {str(e)}")
-            await ctx.send(f"❌ Error generating alphabet bar chart: {str(e)}")
+        return None
