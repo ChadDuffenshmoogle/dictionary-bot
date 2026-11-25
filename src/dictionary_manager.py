@@ -9,12 +9,16 @@
 # - Stats script (not uploaded): writes the "--- Predicted Next Word ---" section of Zoogliography.txt, so autozoog code likely lives there.
 
 import re
+import json
 import pytz
 from datetime import datetime
 from typing import Optional, List
 from .github_api import GitHubAPI
 from .dictionary_parser import DictionaryEntry, parse_dictionary_entries, sort_key_ignore_punct, format_entry
 from .config import BASE_VERSION, FILE_PREFIX, FILE_EXTENSION, logger, ENTRY_PATTERN
+
+# Remembers which Discord message added which word (message id -> word), so editing the message can update the word.
+ENTRY_MESSAGES_FILE = "Entry_Messages.json"
 
 class DictionaryManager:
     """Manages dictionary operations with GitHub integration."""
@@ -303,6 +307,86 @@ class DictionaryManager:
         body = self._strip_zoog_header(existing).split("--- Predicted Next Word ---", 1)[0]
         return [line.strip() for line in body.split("\n") if line.strip()]
 
+    def replace_entry(self, old_term: str, term: str, pos: str, definition: str,
+                      pronunciation: Optional[str] = None, sections: Optional[List[dict]] = None,
+                      etymology: Optional[str] = None) -> bool:
+        """Swaps the entry called old_term for an edited version (the word itself may change).
+        Saved as a new dictionary version, like adding a word."""
+        latest = self.find_latest_version()
+        latest_content = self.get_dictionary_content(latest)
+        if not latest_content or "-----DICTIONARY PROPER-----" not in latest_content:
+            logger.error(f"Could not read the dictionary ({latest}). Cannot edit entry.")
+            return False
+
+        header_part, body_part = latest_content.split("-----DICTIONARY PROPER-----", 1)
+        lines = body_part.split('\n')
+        old_unit = next((u for u in self._parse_units(lines) if u[3].strip().lower() == old_term.strip().lower()), None)
+        if not old_unit:
+            logger.warning(f"Entry '{old_term}' not found in {latest}, nothing edited.")
+            return False
+
+        # A new spelling may not be the same as a different entry that already exists
+        if term.strip().lower() != old_term.strip().lower():
+            if any(term.lower() == e.term.lower() for e in parse_dictionary_entries(latest_content)):
+                logger.warning(f"Term '{term}' already exists, cannot rename '{old_term}' to it.")
+                return False
+
+        # Take the old entry out (and one leftover blank line), then put the new one in its alphabetical place
+        start, end = old_unit[1], old_unit[2]
+        del lines[start:end + 1]
+        if 0 < start < len(lines) and not lines[start].strip() and not lines[start - 1].strip():
+            del lines[start]
+
+        if sections is None:
+            sections = [{"pos": pos, "defs": [{"text": definition, "example": ""}]}]
+        new_entry_text = self._format_new_entry(term, sections, etymology, pronunciation)
+        new_body = self._insert_entry_in_body('\n'.join(lines), term, new_entry_text)
+        if new_body == body_part:
+            logger.info(f"Entry '{old_term}' is already up to date, nothing to save.")
+            return True
+
+        m = re.search(r"v\.?(\d+)\.(\d+)\.(\d+)", latest, re.IGNORECASE)
+        if m:
+            major, minor, patch = map(int, m.groups())
+            new_version = f"v{major}.{minor}.{patch+1}"
+        else:
+            new_version = "v1.2.5"  # Fallback
+        timestamp = datetime.now(pytz.timezone('America/Chicago')).strftime("%B %d, %Y %I:%M %p CDT")
+        new_content = self._update_header(header_part, new_version, timestamp) + "-----DICTIONARY PROPER-----" + new_body
+
+        # This wording is on purpose: the stats script only counts commits that say "with new term" as new words,
+        # and reads "renamed 'old' to 'new'" to keep a renamed word's original add date.
+        if term != old_term:
+            commit_message = f"Edit dictionary {new_version}: renamed '{old_term}' to '{term}'"
+        else:
+            commit_message = f"Edit dictionary {new_version}: updated entry '{term}'"
+
+        success = self.github.create_or_update_file(self.get_filename(new_version), new_content, commit_message)
+        if success:
+            self._cache.clear()
+            logger.info(f"Successfully edited entry '{old_term}' -> '{term}' in {new_version}")
+        else:
+            logger.error(f"Failed to upload {new_version} while editing '{old_term}'")
+        return success
+
+    def get_entry_message_term(self, message_id) -> Optional[str]:
+        """The word that the given Discord message added (None if this message isn't linked to one)."""
+        links = self.github.get_json_file(ENTRY_MESSAGES_FILE, {}) or {}
+        return links.get(str(message_id))
+
+    def save_entry_message(self, message_id, term: str) -> bool:
+        """Remembers which word a Discord message added, so editing that message can update the word later."""
+        links = self.github.get_json_file(ENTRY_MESSAGES_FILE, {}) or {}
+        links[str(message_id)] = term
+        success = self.github.create_or_update_file(
+            ENTRY_MESSAGES_FILE,
+            json.dumps(links, indent=2, ensure_ascii=False),
+            f"Link Discord message {message_id} to entry '{term[:60]}' [skip ci]"
+        )
+        if not success:
+            logger.warning(f"Could not save the message link for '{term}'")
+        return success
+
     def _format_new_entry(self, term: str, sections: List[dict], etymology: Optional[str] = None,
                           pronunciation: Optional[str] = None) -> str:
         """One line for a plain entry, a hyphen block for anything richer."""
@@ -314,13 +398,8 @@ class DictionaryManager:
         lines[0] = f"{FILE_PREFIX} {new_version} - {timestamp}"
         return '\n'.join(lines)
 
-    def _insert_entry_in_body(self, body_part: str, new_term: str, new_entry_text: str) -> str:
-        """Insert the new entry in alphabetical order in the dictionary body."""
-        new_sort_key = sort_key_ignore_punct(new_term)
-        logger.info(f"Inserting '{new_term}' with sort key: '{new_sort_key}'")
-        
-        lines = body_part.split('\n')
-        
+    def _parse_units(self, lines: List[str]) -> list:
+        """Finds each entry in the dictionary body: a list of (sort_key, start_line, end_line, term)."""
         # Parse the body into atomic units (hyphen blocks or simple entries)
         units = []  # List of (sort_key, start_line, end_line, term_name)
         i = 0
@@ -368,6 +447,17 @@ class DictionaryManager:
                 i += 1
             else:
                 i += 1
+        
+        return units
+
+    def _insert_entry_in_body(self, body_part: str, new_term: str, new_entry_text: str) -> str:
+        """Insert the new entry in alphabetical order in the dictionary body."""
+        new_sort_key = sort_key_ignore_punct(new_term)
+        logger.info(f"Inserting '{new_term}' with sort key: '{new_sort_key}'")
+        
+        lines = body_part.split('\n')
+        
+        units = self._parse_units(lines)
         
         # Find insertion point among the units
         insertion_point = None
