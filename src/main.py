@@ -1,9 +1,9 @@
 # src/main.py
-# Bot entry point: Discord client setup, on_message entry/zoog parsing, status rotation, and the daily streak-nudge task.
+# Bot entry point: Discord client setup, on_message entry/zoog parsing, editing an entry by editing its message, status rotation, and the daily streak-nudge task.
 # Related files (what this file needs for certain things):
 # - src/config.py: tokens, channel IDs, ENTRY_PATTERN, nudge settings, logger.
 # - src/github_api.py: reading/writing files and commits on GitHub (streak, nudge state).
-# - src/dictionary_manager.py: add_entry, add_to_zoogliography, remove_from_zoogliography (the zoog: / dezoog: commands).
+# - src/dictionary_manager.py: add_entry, replace_entry (edited messages), get/save_entry_message, add_to_zoogliography, remove_from_zoogliography (the zoog: / dezoog: commands).
 # - src/dictionary_parser.py: parse_message_as_entry (turns a message into a dictionary entry).
 # - src/discord_commands.py: the ! commands (!stats, !random, !streak, !help), which also import helpers from this file.
 # - Autozoog rejection: not handled in this file, so check the file that creates autozoogs.
@@ -331,6 +331,127 @@ async def on_ready():
     if not welcome_sent:
         logger.warning("Could not find a channel to send a welcome message to.")
         await bot.change_presence(activity=discord.Game("⚠️ No channel access"))
+# Patterns that suggest a message is (an attempt at) a dictionary entry
+ENTRY_INDICATORS = [
+    r'\([^)]*\)\s*-',  # (pos) - definition pattern
+    r'\w+\s*\([^)]*\)\s*-\s*.+',  # word (pos) - definition
+    r'Etymology:\s*',  # Etymology section
+    r'Pron(unciation)?:\s*',  # Pronunciation line
+    r'Ex:\s*',  # Examples
+    r'/[^/]+/',  # Phonetic notation
+    r'\(pronounced:'  # Pronunciation notes
+]
+
+def looks_like_entry(text):
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in ENTRY_INDICATORS)
+
+async def clear_entry_errors(message):
+    """Removes the bot's ❌ and its error replies from a message (used once the message is edited)."""
+    try:
+        await message.remove_reaction('❌', bot.user)
+    except discord.HTTPException:
+        pass  # there was no ❌ to remove
+    try:
+        async for reply in message.channel.history(limit=50, after=message):
+            if reply.author == bot.user and reply.reference and reply.reference.message_id == message.id:
+                await reply.delete()
+    except discord.HTTPException:
+        pass
+
+async def handle_entry_message(message, edited=False):
+    """Turns a message into a dictionary entry: a new word, or (for an edited message) an update of
+    the word that message added earlier. Returns True if the message was an entry the bot understood."""
+    global last_word_time, idle_active
+    from .dictionary_parser import parse_message_as_entry
+
+    content = message.content.strip()
+    if not looks_like_entry(content):
+        return False
+
+    logger.info("Message appears to contain dictionary entry format")
+
+    # An edited message starts fresh: the bot's old ❌ and error replies come off
+    if edited:
+        await clear_entry_errors(message)
+
+    parsed_entry = parse_message_as_entry(content)
+
+    if not parsed_entry:
+        logger.info("Message had definition indicators but couldn't be parsed as entry")
+        # Maybe send a helpful message about format if it really looks like they're trying
+        if re.search(r'\([^)]*\)\s*-', content):
+            await message.reply("📝 I detected what looks like a dictionary entry, but couldn't parse it. Make sure it follows the format: `word (pos) - definition` (extras: `+ another meaning`, `Ex: example`, `(v.) - other part of speech`, `Etymology: ...`, `Pron: ...`). You can fix it by editing your message and I'll try again.", mention_author=False)
+        return False
+
+    logger.info(f"Successfully parsed entry: {parsed_entry.term} ({parsed_entry.pos})")
+
+    try:
+        # An edited message that already added a word updates that word instead of adding another
+        old_term = dict_manager.get_entry_message_term(message.id) if edited else None
+
+        if old_term:
+            success = dict_manager.replace_entry(
+                old_term,
+                parsed_entry.term,
+                parsed_entry.pos,
+                parsed_entry.definition,
+                pronunciation=parsed_entry.pronunciation,
+                etymology=parsed_entry.etymology,
+                sections=parsed_entry.sections
+            )
+        else:
+            success = dict_manager.add_entry(
+                parsed_entry.term,
+                parsed_entry.pos,
+                parsed_entry.definition,
+                pronunciation=parsed_entry.pronunciation,
+                etymology=parsed_entry.etymology,
+                sections=parsed_entry.sections
+            )
+
+        if success and old_term:
+            if old_term != parsed_entry.term:
+                dict_manager.save_entry_message(message.id, parsed_entry.term)
+            await message.add_reaction('✅')
+            logger.info(f"Successfully updated entry: {old_term} -> {parsed_entry.term}")
+            await asyncio.sleep(4)
+            await message.remove_reaction('✅', bot.user)
+        elif success:
+            dict_manager.save_entry_message(message.id, parsed_entry.term)
+
+            last_word_time = datetime.utcnow()
+            idle_active = False
+
+            truncated_term = parsed_entry.term if len(parsed_entry.term) <= 50 else parsed_entry.term[:47] + '...'
+
+            await message.add_reaction('✅')
+            logger.info(f"Successfully added entry: {parsed_entry.term}")
+
+            latest_version = dict_manager.find_latest_version()
+            entries = dict_manager.get_all_entries(latest_version)
+            word_number = len(entries)
+            status_text = f"🔤 #{word_number}: {truncated_term}"
+            await bot.change_presence(activity=discord.CustomActivity(name=status_text))
+
+            # Remove the reaction after 4 seconds
+            await asyncio.sleep(4)
+            await message.remove_reaction('✅', bot.user)
+        else:
+            await message.add_reaction('❌')
+            if old_term:
+                await message.reply(f"❌ Could not update '{old_term}'. It may no longer be in the dictionary, or the new word may already exist.", mention_author=False)
+                logger.warning(f"Failed to update entry: {old_term}")
+            else:
+                await message.reply(f"❌ Could not add '{parsed_entry.term}'. It may already exist (words added before editing was supported can't be updated from their message) or there was an error.", mention_author=False)
+                logger.warning(f"Failed to add entry: {parsed_entry.term}")
+
+    except Exception as e:
+        logger.error(f"Error adding entry '{parsed_entry.term}': {e}")
+        await message.add_reaction('❌')
+        await message.reply(f"❌ An error occurred while adding '{parsed_entry.term}': {str(e)}", mention_author=False)
+
+    return True
+
 # Updated @bot.event on_message function for src/main.py
 
 @bot.event
@@ -388,86 +509,34 @@ async def on_message(message):
             await message.channel.send("📝 Add something after `dezoog: ` to remove it.")
         return
 
-    # Try to parse the entire message as a dictionary entry using the new parser
-    from .dictionary_parser import parse_message_as_entry
-    
-    # First, try to detect if this looks like a dictionary entry at all
-    has_definition_format = False
-    
-    # Look for basic patterns that suggest this is a dictionary entry
-    definition_indicators = [
-        r'\([^)]*\)\s*-',  # (pos) - definition pattern
-        r'\w+\s*\([^)]*\)\s*-\s*.+',  # word (pos) - definition
-        r'Etymology:\s*',  # Etymology section
-        r'Pron(unciation)?:\s*',  # Pronunciation line
-        r'Ex:\s*',  # Examples
-        r'/[^/]+/',  # Phonetic notation
-        r'\(pronounced:'  # Pronunciation notes
-    ]
-    
-    for pattern in definition_indicators:
-        if re.search(pattern, content, re.IGNORECASE):
-            has_definition_format = True
-            break
-    
-    if has_definition_format:
-        logger.info("Message appears to contain dictionary entry format")
-        
-        # Try to parse the entry
-        parsed_entry = parse_message_as_entry(content)
-        
-        if parsed_entry:
-            logger.info(f"Successfully parsed entry: {parsed_entry.term} ({parsed_entry.pos})")
-            
-            try:
-                success = dict_manager.add_entry(
-                    parsed_entry.term,
-                    parsed_entry.pos,
-                    parsed_entry.definition,
-                    pronunciation=parsed_entry.pronunciation,
-                    etymology=parsed_entry.etymology,
-                    sections=parsed_entry.sections
-                )
-                
-                if success:
-                    global last_word_time, idle_active
-                    last_word_time = datetime.utcnow()
-                    idle_active = False
-
-                    truncated_term = parsed_entry.term if len(parsed_entry.term) <= 50 else parsed_entry.term[:47] + '...'
-                    
-                    await message.add_reaction('✅')
-                    logger.info(f"Successfully added entry: {parsed_entry.term}")
-
-                    latest_version = dict_manager.find_latest_version()
-                    entries = dict_manager.get_all_entries(latest_version)
-                    word_number = len(entries)
-                    status_text = f"🔤 #{word_number}: {truncated_term}"
-                    await bot.change_presence(activity=discord.CustomActivity(name=status_text))
-                    
-                    # Remove the reaction after 4 seconds
-                    await asyncio.sleep(4)
-                    await message.remove_reaction('✅', bot.user)
-                else:
-                    await message.add_reaction('❌')
-                    await message.channel.send(f"❌ Could not add '{parsed_entry.term}'. It may already exist or there was an error.")
-                    logger.warning(f"Failed to add entry: {parsed_entry.term}")
-                    
-            except Exception as e:
-                logger.error(f"Error adding entry '{parsed_entry.term}': {e}")
-                await message.add_reaction('❌')
-                await message.channel.send(f"❌ An error occurred while adding '{parsed_entry.term}': {str(e)}")
-            
-            return  # Don't process commands if we've handled an entry
-        
-        else:
-            logger.info("Message had definition indicators but couldn't be parsed as entry")
-            # Maybe send a helpful message about format if it really looks like they're trying
-            if re.search(r'\([^)]*\)\s*-', content):
-                await message.channel.send("📝 I detected what looks like a dictionary entry, but couldn't parse it. Make sure it follows the format: `word (pos) - definition` (extras: `+ another meaning`, `Ex: example`, `(v.) - other part of speech`, `Etymology: ...`, `Pron: ...`). You will have to re-send the message rather than edit it.")
+    # Try to turn the message into a dictionary entry (a new word, or a fixed-up one)
+    if await handle_entry_message(message):
+        return  # Don't process commands if we've handled an entry
 
     # Process commands if the message is not an entry
     await bot.process_commands(message)
+
+@bot.event
+async def on_raw_message_edit(payload):
+    """Runs when any message is edited, even an old one. Only edits that look like a dictionary entry do anything."""
+    data = payload.data
+    content = (data.get('content') or '').strip()
+    # Skip updates that aren't real text edits (like a link preview appearing) and anything that isn't entry-shaped
+    if not content or not data.get('edited_timestamp') or not looks_like_entry(content):
+        return
+
+    channel = bot.get_channel(payload.channel_id)
+    try:
+        if channel is None:
+            channel = await bot.fetch_channel(payload.channel_id)
+        message = await channel.fetch_message(payload.message_id)
+    except discord.HTTPException:
+        return
+    if message.author == bot.user:
+        return
+
+    logger.info(f'Edited message from {message.author}')
+    await handle_entry_message(message, edited=True)
 
 @bot.event
 async def on_command_error(ctx, error):
