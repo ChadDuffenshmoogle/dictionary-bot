@@ -28,53 +28,14 @@ class DictionaryManager:
         self._cache = {}  # Cache file contents to avoid repeated API calls
 
     def find_latest_version(self) -> str:
-        """Finds the latest dictionary version from GitHub - FIXED VERSION."""
+        """Reads the version (like v4521) from the first line of the dictionary file."""
         try:
-            files = self.github.list_dictionary_files()
-            logger.info(f"Found {len(files)} dictionary files from GitHub")
-            
-            if not files:
-                logger.warning("No dictionary files found, using base version")
-                return BASE_VERSION
-
-            max_version = BASE_VERSION
-            max_nums = [int(i) for i in BASE_VERSION[1:].split('.')]
-
-            for filename in files:
-                logger.debug(f"Processing filename: {filename}")
-                
-                # More flexible regex to match various version formats in your files
-                # This will match "v1.2.44", "v1.2.4", etc.
-                version_patterns = [
-                    r"v\.?(\d+)\.(\d+)\.(\d+)",  # Original pattern
-                    r"(\d+)\.(\d+)\.(\d+)",     # Without 'v' prefix
-                    r"v(\d+)\.(\d+)\.(\d+)",    # With 'v' prefix
-                ]
-                
-                matched = False
-                for pattern in version_patterns:
-                    m = re.search(pattern, filename, re.IGNORECASE)
-                    if m:
-                        nums = list(map(int, m.groups()))
-                        logger.debug(f"Extracted version numbers: {nums} from {filename}")
-                        
-                        # Compare version numbers properly
-                        if self._compare_versions(nums, max_nums) > 0:
-                            max_nums = nums
-                            max_version = f"v{nums[0]}.{nums[1]}.{nums[2]}"
-                            logger.debug(f"New max version: {max_version}")
-                        matched = True
-                        break
-                
-                if not matched:
-                    logger.warning(f"Could not extract version from filename: {filename}")
-
-            logger.info(f"Latest version detected: {max_version}")
-            return max_version
-            
+            content = self.github.get_file_content(self.get_filename(""))
+            first_line = (content or "").split("\n", 1)[0]
+            m = re.search(r"\s(v[\d.]+)\s", first_line, re.IGNORECASE)
+            return m.group(1) if m else BASE_VERSION
         except Exception as e:
             logger.error(f"Error finding latest version: {e}")
-            logger.error(f"Falling back to base version: {BASE_VERSION}")
             return BASE_VERSION
 
     def _compare_versions(self, version1: List[int], version2: List[int]) -> int:
@@ -91,7 +52,7 @@ class DictionaryManager:
 
     def get_filename(self, version: str) -> str:
         """Constructs the filename for a given dictionary version."""
-        return f"{FILE_PREFIX} {version}{FILE_EXTENSION}"
+        return f"{FILE_PREFIX}{FILE_EXTENSION}"
 
     def get_dictionary_content(self, version: str) -> Optional[str]:
         """Gets the live dictionary content from GitHub (never cached)."""
@@ -142,13 +103,7 @@ class DictionaryManager:
             logger.warning(f"Term '{term}' already exists—skipping addition.")
             return False
 
-        # Determine new version (increment patch)
-        m = re.search(r"v\.?(\d+)\.(\d+)\.(\d+)", latest, re.IGNORECASE)
-        if m:
-            major, minor, patch = map(int, m.groups())
-            new_version = f"v{major}.{minor}.{patch+1}"
-        else:
-            new_version = "v1.2.5"  # Fallback
+        new_version = f"v{len(existing_entries) + 1}"
 
         # Create new entry with appropriate formatting
         if sections is None:
@@ -345,12 +300,7 @@ class DictionaryManager:
             logger.info(f"Entry '{old_term}' is already up to date, nothing to save.")
             return True
 
-        m = re.search(r"v\.?(\d+)\.(\d+)\.(\d+)", latest, re.IGNORECASE)
-        if m:
-            major, minor, patch = map(int, m.groups())
-            new_version = f"v{major}.{minor}.{patch+1}"
-        else:
-            new_version = "v1.2.5"  # Fallback
+        new_version = f"v{len(parse_dictionary_entries(latest_content))}"
         timestamp = datetime.now(pytz.timezone('America/Chicago')).strftime("%B %d, %Y %I:%M %p CDT")
         new_content = self._update_header(header_part, new_version, timestamp) + "-----DICTIONARY PROPER-----" + new_body
 
